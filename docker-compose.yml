@@ -23,13 +23,14 @@ services:
       - "8080:8080"
 
     environment:
-      # Your login PIN - the only thing between the internet and your library.
-      # Either set a value here (6+ digits), or export BOOKSHELF_PIN before
-      # `docker compose up`, or leave it empty and the app generates one and
-      # prints it once:   docker compose logs | grep -i pin
+      # The PIN is NOT written here - it lives in a file called `.env` next to
+      # this one, which is never committed to git. Docker Compose reads it
+      # automatically. Copy `.env.example` to `.env` and set BOOKSHELF_PIN.
       #
-      # A PIN set here always wins over a previously stored one, so this is also
-      # the recovery path if the PIN is forgotten: change it, `up -d` again.
+      # Leaving it unset makes the app generate a PIN and print it once:
+      #   docker compose logs | grep -i pin
+      # A PIN set in .env always wins over a stored one, so this is also the
+      # recovery path if the PIN is forgotten: change it, `up -d` again.
       BOOKSHELF_PIN: "${BOOKSHELF_PIN:-}"
 
     volumes:

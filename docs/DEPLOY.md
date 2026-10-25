@@ -13,24 +13,35 @@ The `data` folder sits next to the compose file and holds the whole catalogue:
 mkdir -p ~/docker/home-library && cd ~/docker/home-library
 ```
 
-## 2. Get `docker-compose.yml`
+## 2. Get the two files
 
-Download the shipped file rather than retyping it — it is the one CI builds
-against:
-
-```bash
-curl -fsSL -o docker-compose.yml \
-  https://raw.githubusercontent.com/UFF-Login/home-library/main/docker-compose.yml
-```
-
-Then open it and set your PIN, either by editing `BOOKSHELF_PIN` or by exporting
-it before `up`:
+Download the shipped compose file rather than retyping it — it is the one CI
+builds against — then create the `.env` file that holds your PIN:
 
 ```bash
-export BOOKSHELF_PIN=482913     # or edit the file
+curl -fsSL -O https://raw.githubusercontent.com/UFF-Login/home-library/main/docker-compose.yml
+curl -fsSL -o .env.example https://raw.githubusercontent.com/UFF-Login/home-library/main/.env.example
+cp .env.example .env
 ```
 
-Leave it empty and the app generates a PIN and prints it once:
+Edit `.env` and set your PIN:
+
+```
+BOOKSHELF_PIN=482913
+```
+
+Two files, two jobs:
+
+| File | Committed to git? | Holds |
+| --- | --- | --- |
+| `docker-compose.yml` | yes | image, port, volume, healthcheck |
+| `.env` | **never** | your PIN |
+
+Why split: the compose file is public on GitHub. Docker Compose reads `.env`
+automatically from the folder it runs in, so the secret never needs to be typed
+into a file that gets published.
+
+If `.env` is missing entirely, the app generates a PIN and prints it once:
 `docker compose logs | grep -i pin`.
 
 The service, container and data folder are all named `home-library`, the port is
