@@ -267,6 +267,12 @@ button:active { transform: scale(0.985); }
   max-width: 90vw; text-align: center;
 }
 
+/* Publisher blurb from Open Library or Google Books, shown in the book sheet. */
+.book-description {
+  margin: 0 0 12px; font-size: 14px; line-height: 1.5; color: var(--muted);
+  max-height: 9em; overflow-y: auto;
+}
+
 .field { display: grid; gap: 6px; margin-bottom: 10px; }
 .field label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .inline-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

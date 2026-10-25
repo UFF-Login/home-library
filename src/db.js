@@ -427,15 +427,25 @@ export function getLookupCache(db, isbn13) {
   } catch {
     payload = null;
   }
-  return { found: Boolean(row.found), work: payload, fetchedAt: row.fetched_at };
+  // Newer entries store { work, sources }: `sources` records which enrichment
+  // providers were usable at fetch time, so a key added later can be noticed and
+  // the entry refreshed. Older entries are the bare work object.
+  const isRecord = payload && typeof payload === 'object' && 'work' in payload;
+  return {
+    found: Boolean(row.found),
+    work: isRecord ? payload.work : payload,
+    sources: isRecord ? (payload.sources ?? {}) : {},
+    legacy: !isRecord,
+    fetchedAt: row.fetched_at,
+  };
 }
 
-export function setLookupCache(db, isbn13, { found, work }) {
+export function setLookupCache(db, isbn13, { found, work, sources = {} }) {
   db.prepare(
     `INSERT INTO lookup_cache (isbn13, found, payload, fetched_at) VALUES (?,?,?,?)
      ON CONFLICT(isbn13) DO UPDATE SET found = excluded.found, payload = excluded.payload,
                                        fetched_at = excluded.fetched_at`,
-  ).run(isbn13, found ? 1 : 0, work ? JSON.stringify(work) : null, nowIso());
+  ).run(isbn13, found ? 1 : 0, JSON.stringify({ work, sources }), nowIso());
 }
 
 export function recordScan(db, isbn13, verdict) {

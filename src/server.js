@@ -228,15 +228,40 @@ async function handleScan(isbnRaw) {
  */
 async function metaFor(isbn13) {
   const cached = getLookupCache(db, isbn13);
-  if (cached) return { ...cached, cached: true };
+  const googleAvailable = Boolean(googleBooksKey());
 
-  const result = await lookupIsbn(isbn13).catch(() => ({ found: false, work: null }));
+  /**
+   * Re-fetch instead of trusting the cache when the enrichment setup changed.
+   * Adding a Google Books key weeks later must not leave every already-scanned
+   * book stuck with the thinner data it got before the key existed - that is
+   * exactly what "I added the key but see nothing new" looked like.
+   */
+  // 'off' means it was never attempted (no key at the time); 'failed' means it was
+  // tried and gave nothing, and must not be retried on every single scan.
+  const googleNeverTried =
+    cached?.sources?.googleBooks === undefined || cached.sources.googleBooks === 'off';
+  const stale = cached && (cached.legacy || (googleAvailable && googleNeverTried));
+
+  if (cached && !stale) return { ...cached, cached: true };
+
+  // Rebuild on top of what we already knew, so a refresh cannot lose data that
+  // Open Library gave us the first time (its responses are not always stable).
+  const result = cached?.work
+    ? { found: true, work: { ...cached.work }, isbn13 }
+    : await lookupIsbn(isbn13).catch(() => ({ found: false, work: null, isbn13 }));
+
+  const sources = {
+    ...(cached?.sources ?? {}),
+    // Keep 'ok'/'failed'; reset only the never-attempted case so it is retried.
+    googleBooks: ['ok', 'failed', 'skipped'].includes(cached?.sources?.googleBooks)
+      ? cached.sources.googleBooks
+      : 'off',
+  };
 
   if (result.found && result.work) {
     const work = result.work;
 
-    // Rating: Open Library first (free, no key), Google Books as the fallback when
-    // a key is configured and OL has nothing.
+    // Open Library's community rating first: free, no key, no quota.
     if (work.workKey && work.rating == null) {
       const rating = await fetchRating(work.workKey).catch(() => null);
       if (rating) {
@@ -244,24 +269,44 @@ async function metaFor(isbn13) {
         work.ratingsCount = rating.count;
       }
     }
-    if (work.rating == null) {
-      const gb = await googleBooksByIsbn(isbn13).catch(() => null);
-      if (gb) {
-        if (gb.rating != null) {
-          work.rating = gb.rating;
-          work.ratingsCount = gb.ratingsCount;
-        }
-        work.description ??= gb.description;
-        if (!work.pages && gb.pages) work.pages = gb.pages;
-        // Google's title text sometimes carries a series marker ours can parse.
-        if (!work.series) {
-          const parsed = parseSeries({ title: gb.title ?? work.title, subtitle: gb.subtitle ?? work.subtitle });
-          if (parsed.series) {
-            work.series = parsed.series;
-            work.seriesKey = seriesKey(parsed.series);
-            work.volume = parsed.volume ?? work.volume;
+
+    // Google Books, when a key is configured. It is consulted for a description
+    // even when Open Library already had a rating - and its rating wins when it
+    // has substantially more votes, which is usually the case (Open Library
+    // often has one or two, Google has thousands).
+    if (googleAvailable) {
+      const wantsRating = work.rating == null;
+      const wantsDescription = !work.description;
+      if (wantsRating || wantsDescription) {
+        const gb = await googleBooksByIsbn(isbn13).catch(() => null);
+        // Record the attempt either way: a broken key must not mean an API call on
+        // every scan forever.
+        sources.googleBooks = gb ? 'ok' : 'failed';
+        if (gb) {
+          if (
+            gb.rating != null &&
+            (work.rating == null || (gb.ratingsCount ?? 0) > (work.ratingsCount ?? 0))
+          ) {
+            work.rating = gb.rating;
+            work.ratingsCount = gb.ratingsCount;
+          }
+          work.description ??= gb.description;
+          if (!work.pages && gb.pages) work.pages = gb.pages;
+          // Google's title text sometimes carries a series marker ours can parse.
+          if (!work.series) {
+            const parsed = parseSeries({
+              title: gb.title ?? work.title,
+              subtitle: gb.subtitle ?? work.subtitle,
+            });
+            if (parsed.series) {
+              work.series = parsed.series;
+              work.seriesKey = seriesKey(parsed.series);
+              work.volume = parsed.volume ?? work.volume;
+            }
           }
         }
+      } else {
+        sources.googleBooks = 'skipped';
       }
     }
 
@@ -278,8 +323,12 @@ async function metaFor(isbn13) {
     }
   }
 
-  setLookupCache(db, isbn13, result);
-  return { ...result, cached: false };
+  // A key that exists but had nothing to add still counts as settled, otherwise
+  // this entry would be re-enriched on every single scan.
+  if (googleAvailable && sources.googleBooks === 'off') sources.googleBooks = 'skipped';
+
+  setLookupCache(db, isbn13, { ...result, sources });
+  return { ...result, sources, cached: false };
 }
 
 /** Attach the gap maths to a series object for the UI. */
@@ -412,7 +461,15 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/healthz') {
       // version + book count here make a deployment check a single curl, and
       // expose no personal data.
-      return json(res, 200, { ok: true, version: VERSION, build: BUILD, books: stats(db).owned });
+      // `sources` here is what makes "is my API key actually wired up?" a single
+      // curl rather than a guess.
+      return json(res, 200, {
+        ok: true,
+        version: VERSION,
+        build: BUILD,
+        books: stats(db).owned,
+        sources: { googleBooks: Boolean(googleBooksKey()) },
+      });
     }
 
     const cookies = parseCookies(req.headers.cookie);
@@ -473,6 +530,9 @@ const server = http.createServer(async (req, res) => {
         work: meta.work ? { ...meta.work, isbn13: lookupMatch[1] } : null,
         series,
         cached: meta.cached,
+        // Which enrichment providers have answered for this ISBN: 'ok', 'failed'
+        // (tried, nothing) or 'off' (no key configured).
+        sources: meta.sources ?? {},
       });
     }
 

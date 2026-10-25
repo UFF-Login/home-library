@@ -561,6 +561,8 @@ function openDetail(isbn) {
       </div>
     </div>
 
+    ${book.description ? `<p class="book-description">${esc(book.description)}</p>` : ''}
+
     <div class="field">
       <label>Status</label>
       <div class="btn-row">
