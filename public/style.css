@@ -41,7 +41,7 @@ h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: -0.01em; }
 .gate-card p { color: var(--muted); margin: 0; }
 .error { color: var(--warn); min-height: 1.2em; font-size: 14px; }
 
-input[type="password"], input[type="search"], input[type="text"], input:not([type]) {
+input[type="password"], input[type="search"], input[type="text"], input:not([type]), textarea {
   background: var(--card-2);
   border: 1px solid var(--line);
   color: var(--text);
@@ -49,7 +49,9 @@ input[type="password"], input[type="search"], input[type="text"], input:not([typ
   padding: 14px 16px;
   font-size: 16px; /* 16px stops iOS zooming the page on focus */
   width: 100%;
+  font-family: inherit;
 }
+textarea { resize: vertical; min-height: 84px; line-height: 1.4; }
 input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 button, .button {

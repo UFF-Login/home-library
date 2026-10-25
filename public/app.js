@@ -421,6 +421,8 @@ function resultCard(data) {
     authors.slice(0, 2).join(', '),
     volumeLabel,
     book?.published,
+    // Community rating, when Open Library has one for the work.
+    book?.rating ? `★ ${book.rating}${book.ratingsCount ? ` (${book.ratingsCount})` : ''}` : null,
     awaitingMeta ? 'looking up details…' : `${data.elapsedMs ?? 0} ms`,
   ].filter(Boolean);
 
@@ -586,22 +588,25 @@ function openDetail(isbn) {
       </div>
     </div>
 
-    <div class="field"><label for="d-location">Where it is</label><input id="d-location" value="${esc(book.location ?? '')}" placeholder="Study, shelf 3" /></div>
+    <div class="field"><label for="d-owner">Who owns it</label><input id="d-owner" value="${esc(book.owner ?? '')}" placeholder="Me" /></div>
     <div class="field"><label for="d-loan">Lent to</label><input id="d-loan" value="${esc(book.loanedTo ?? '')}" placeholder="Empty = on the shelf" /></div>
 
-    <div class="inline-fields">
-      <div class="field"><label for="d-series">Series</label><input id="d-series" value="${esc(book.series ?? '')}" /></div>
-      <div class="field"><label for="d-volume">Volume</label><input id="d-volume" inputmode="numeric" value="${esc(book.volume ?? '')}" /></div>
+    <div class="field">
+      <label>Series &amp; volume</label>
+      <p class="hint" style="margin:0 0 6px">Filled in from Open Library when it knows them — nothing to type. Only correct it if it is wrong; the missing-number maths uses it.</p>
+      <div class="inline-fields">
+        <div class="field" style="margin:0"><input id="d-series" placeholder="Series" value="${esc(book.series ?? '')}" /></div>
+        <div class="field" style="margin:0"><input id="d-volume" inputmode="numeric" placeholder="Volume" value="${esc(book.volume ?? '')}" /></div>
+      </div>
     </div>
 
-    <div class="field"><label for="d-notes">Notes</label><input id="d-notes" value="${esc(book.notes ?? '')}" /></div>
+    <div class="field"><label for="d-notes">Notes</label><textarea id="d-notes" rows="3" placeholder="Anything worth remembering">${esc(book.notes ?? '')}</textarea></div>
 
     <div class="btn-row">
       <button class="primary" id="d-save">Save</button>
       <button class="ghost" id="d-close">Close</button>
       <button class="danger" id="d-delete">Delete</button>
     </div>
-    <p class="hint" style="margin-top:10px">Fixing series or volume here changes the missing-number maths for the whole series.</p>
   `);
 
   const draft = { state: book.state, readState: book.readState, myRating: book.myRating };
@@ -638,7 +643,7 @@ function openDetail(isbn) {
       state: draft.state,
       read_state: draft.readState,
       my_rating: draft.myRating,
-      location: $('d-location').value.trim() || null,
+      owner: $('d-owner').value.trim() || null,
       loaned_to: $('d-loan').value.trim() || null,
       loaned_at: $('d-loan').value.trim() ? book.loanedAt ?? new Date().toISOString() : null,
       notes: $('d-notes').value.trim() || null,
@@ -867,16 +872,38 @@ async function refreshApp() {
   }
 }
 
-// Drag down anywhere at the top of the page to refresh. `passive: false` on move
-// so the gesture does not also trigger the browser's own bounce.
+// Pull-to-refresh gesture.
+//
+// The first version hijacked scrolling: it armed on touchstart at the top, then
+// called preventDefault() as soon as the finger moved down - but scrolling UP a
+// page (drag down) is exactly that motion, so scrolling back up triggered a
+// refresh. Now a gesture is only claimed once the page is demonstrably at the
+// top AND the drag is downward, and it is abandoned immediately if the page
+// scrolls at all.
+const PTR_DEADZONE = 14;
+let ptrPulling = false;
+
+function scrollTopNow() {
+  return document.scrollingElement?.scrollTop ?? window.scrollY ?? 0;
+}
+
+function abandonPull() {
+  ptrStartY = null;
+  ptrPulling = false;
+  ptrDelta = 0;
+  ptrRender(0, 'Pull to refresh');
+}
+
 window.addEventListener(
   'touchstart',
   (event) => {
-    if (refreshBusy || window.scrollY > 0) {
-      ptrStartY = null;
+    const blocked = refreshBusy || event.touches.length !== 1 || scrollTopNow() > 0 || !$('sheet').hidden;
+    if (blocked) {
+      abandonPull();
       return;
     }
     ptrStartY = event.touches[0].clientY;
+    ptrPulling = false;
     ptrDelta = 0;
   },
   { passive: true },
@@ -886,27 +913,38 @@ window.addEventListener(
   'touchmove',
   (event) => {
     if (ptrStartY === null) return;
-    const delta = event.touches[0].clientY - ptrStartY;
-    if (delta <= 0 || window.scrollY > 0) {
-      ptrDelta = 0;
-      ptrRender(0, 'Pull to refresh');
+
+    // The page moved, or the drag is upward: this is a scroll, not a pull.
+    if (scrollTopNow() > 0 || event.touches[0].clientY - ptrStartY <= 0) {
+      abandonPull();
       return;
     }
+
+    const delta = event.touches[0].clientY - ptrStartY;
+    if (delta < PTR_DEADZONE) return; // ignore jitter
+
+    ptrPulling = true;
     ptrDelta = delta;
     ptrRender(delta, delta > PTR_THRESHOLD ? 'Release to refresh' : 'Pull to refresh');
-    if (delta > 8) event.preventDefault();
+    event.preventDefault();
   },
   { passive: false },
 );
 
 window.addEventListener('touchend', () => {
-  if (ptrStartY === null) return;
+  if (!ptrPulling) {
+    abandonPull();
+    return;
+  }
   const trigger = ptrDelta > PTR_THRESHOLD;
   ptrStartY = null;
+  ptrPulling = false;
   ptrDelta = 0;
   if (trigger) refreshApp();
   else ptrRender(0, 'Pull to refresh');
 });
+
+window.addEventListener('touchcancel', abandonPull);
 
 document.addEventListener('visibilitychange', () => {
   // Coming back to the app is a good moment to notice a new build.

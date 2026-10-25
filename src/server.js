@@ -227,7 +227,20 @@ async function handleScan(isbnRaw) {
 async function metaFor(isbn13) {
   const cached = getLookupCache(db, isbn13);
   if (cached) return { ...cached, cached: true };
+
   const result = await lookupIsbn(isbn13).catch(() => ({ found: false, work: null }));
+
+  // Community rating lives on the work, so it needs one more call. Doing it here
+  // (and caching it) means the scan card can show stars before the book is added,
+  // rather than only after.
+  if (result.found && result.work?.workKey && result.work.rating == null) {
+    const rating = await fetchRating(result.work.workKey).catch(() => null);
+    if (rating) {
+      result.work.rating = rating.average;
+      result.work.ratingsCount = rating.count;
+    }
+  }
+
   setLookupCache(db, isbn13, result);
   return { ...result, cached: false };
 }
@@ -274,7 +287,7 @@ function wrapBook(book) {
 /** Fields a user is allowed to write. Anything else in a PATCH is ignored. */
 function pickFields(body = {}) {
   const fields = {};
-  for (const key of ['read_state', 'my_rating', 'notes', 'location', 'loaned_to', 'loaned_at']) {
+  for (const key of ['read_state', 'my_rating', 'notes', 'location', 'owner', 'loaned_to', 'loaned_at']) {
     if (body[key] !== undefined) fields[key] = body[key];
   }
   return fields;

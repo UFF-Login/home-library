@@ -21,6 +21,7 @@ const FIELDS = [
   'cover_i',
   'publisher',
   'number_of_pages_median',
+  'series',
   'isbn',
 ].join(',');
 

@@ -87,7 +87,19 @@ export function openDb(path) {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+/**
+ * Additive migrations. Kept separate from SCHEMA so an existing catalogue picks
+ * up new columns without a wipe.
+ */
+function migrate(db) {
+  const columns = db.prepare('PRAGMA table_info(books)').all().map((c) => c.name);
+  // "Who owns it" replaced "where is it": the shelf location was never the
+  // interesting fact, ownership is.
+  if (!columns.includes('owner')) db.exec('ALTER TABLE books ADD COLUMN owner TEXT');
 }
 
 export function getMeta(db, key) {
@@ -210,7 +222,8 @@ export function saveBook(db, { isbn13, work, state = 'owned', fields = {} }) {
         `UPDATE books SET
            state = ?, read_state = COALESCE(?, read_state),
            my_rating = COALESCE(?, my_rating), notes = COALESCE(?, notes),
-           location = COALESCE(?, location), loaned_to = COALESCE(?, loaned_to),
+           location = COALESCE(?, location), owner = COALESCE(?, owner),
+           loaned_to = COALESCE(?, loaned_to),
            loaned_at = COALESCE(?, loaned_at), updated_at = ?
          WHERE id = ?`,
       ).run(
@@ -219,6 +232,7 @@ export function saveBook(db, { isbn13, work, state = 'owned', fields = {} }) {
         fields.my_rating ?? null,
         fields.notes ?? null,
         fields.location ?? null,
+        fields.owner ?? null,
         fields.loaned_to ?? null,
         fields.loaned_at ?? null,
         at,
@@ -227,8 +241,8 @@ export function saveBook(db, { isbn13, work, state = 'owned', fields = {} }) {
     } else {
       db.prepare(
         `INSERT INTO books (isbn13, work_id, state, read_state, my_rating, notes, location,
-                            loaned_to, loaned_at, added_at, updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+                            owner, loaned_to, loaned_at, added_at, updated_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
       ).run(
         isbn13,
         workId,
@@ -237,6 +251,7 @@ export function saveBook(db, { isbn13, work, state = 'owned', fields = {} }) {
         fields.my_rating ?? null,
         fields.notes ?? null,
         fields.location ?? null,
+        fields.owner ?? null,
         fields.loaned_to ?? null,
         fields.loaned_at ?? null,
         at,
@@ -268,6 +283,7 @@ function rowToBook(row) {
     myRating: row.my_rating,
     notes: row.notes,
     location: row.location,
+    owner: row.owner ?? null,
     loanedTo: row.loaned_to,
     loanedAt: row.loaned_at,
     addedAt: row.added_at,
@@ -448,7 +464,7 @@ export function exportAll(db) {
     exportedAt: nowIso(),
     books: db
       .prepare(
-        `SELECT b.isbn13, b.state, b.read_state, b.my_rating, b.notes, b.location, b.loaned_to,
+        `SELECT b.isbn13, b.state, b.read_state, b.my_rating, b.notes, b.location, b.owner, b.loaned_to,
                 b.loaned_at, b.added_at, w.title, w.subtitle, w.authors, w.series, w.volume,
                 w.publisher, w.published, w.pages, w.description, w.rating, w.ratings_count
            FROM books b JOIN works w ON w.id = b.work_id`,
