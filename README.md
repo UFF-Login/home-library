@@ -1,4 +1,4 @@
-# Bookshelf
+# Home Library
 
 Self-hosted library catalogue. Scan a book's barcode with your phone, and the
 app tells you whether you already own it — instantly, from your own database,
@@ -44,7 +44,7 @@ You need Docker with the compose plugin, and an HTTPS hostname pointed at it.
 
 ```bash
 mkdir -p ~/bookshelf && cd ~/bookshelf
-curl -O https://raw.githubusercontent.com/UFF-Login/bookshelf/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/UFF-Login/home-library/main/docker-compose.yml
 # edit BOOKSHELF_PIN and the image name in docker-compose.yml
 docker compose up -d
 ```
@@ -84,7 +84,7 @@ Images are published by GitHub Actions to GHCR for both `linux/amd64` and
 The GHCR package is **public**, so the server needs no login and no token:
 
 ```bash
-docker pull ghcr.io/uff-login/bookshelf:latest    # works anonymously
+docker pull ghcr.io/uff-login/home-library:latest    # works anonymously
 ```
 
 Public means the *image* is pullable. The catalogue itself never leaves the

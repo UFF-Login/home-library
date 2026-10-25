@@ -10,16 +10,16 @@ from GitHub.
 The `data` folder sits next to the compose file and holds the whole catalogue:
 
 ```bash
-mkdir -p ~/docker/bookshelf && cd ~/docker/bookshelf
+mkdir -p ~/docker/home-library && cd ~/docker/home-library
 ```
 
 ## 2. Write `docker-compose.yml`
 
 ```yaml
 services:
-  bookshelf:
-    image: ghcr.io/UFF-Login/bookshelf:latest
-    container_name: bookshelf
+  home-library:
+    image: ghcr.io/UFF-Login/home-library:latest
+    container_name: home-library
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -39,7 +39,7 @@ services:
 
 ## 3. Pull credentials: none needed
 
-The GHCR package `ghcr.io/UFF-Login/bookshelf` is **public**, so `docker compose
+The GHCR package `ghcr.io/UFF-Login/home-library` is **public**, so `docker compose
 pull` works with no login and no token on the server.
 
 Only if it is ever switched back to private: create a token with
@@ -110,7 +110,7 @@ cookie `Secure`. Remove the `ports:` block if Traefik shares the network.
 ## 7. Updating
 
 ```bash
-cd ~/docker/bookshelf
+cd ~/docker/home-library
 docker compose pull && docker compose up -d
 ```
 
@@ -120,7 +120,7 @@ worker is network-first, so a refresh picks up the new version immediately.
 ## 8. Backup
 
 ```bash
-docker run --rm -v "$PWD/data:/data" -v "$PWD:/out" alpine tar czf /out/bookshelf-$(date +%F).tgz -C /data .
+docker run --rm -v "$PWD/data:/data" -v "$PWD:/out" alpine tar czf /out/home-library-$(date +%F).tgz -C /data .
 ```
 
 Also: the app's **More → Download catalogue** button gives the same data as JSON.

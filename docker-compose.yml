@@ -4,9 +4,9 @@
 # The image is built by GitHub Actions and published to GHCR, so the server
 # needs nothing but Docker - no Node, no compiler, no source checkout.
 services:
-  bookshelf:
-    image: ghcr.io/UFF-Login/bookshelf:latest
-    container_name: bookshelf
+  home-library:
+    image: ghcr.io/UFF-Login/home-library:latest
+    container_name: home-library
     restart: unless-stopped
 
     ports:
