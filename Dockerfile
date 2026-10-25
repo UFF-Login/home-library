@@ -8,9 +8,13 @@ ENV NODE_ENV=production \
     PORT=8080 \
     DATA_DIR=/data
 
-# Build identity, surfaced in the UI and in /healthz. CI passes the commit SHA.
-ARG APP_VERSION=dev
-ENV APP_VERSION=${APP_VERSION}
+# APP_VERSION is the human version shown in the UI (v1.0, v1.3, v2.0) and comes
+# from package.json. APP_BUILD is the exact artifact (the commit SHA) used to
+# stamp asset URLs, so every deploy gets fresh ones even without a version bump.
+ARG APP_VERSION=
+ARG APP_BUILD=dev
+ENV APP_VERSION=${APP_VERSION} \
+    APP_BUILD=${APP_BUILD}
 
 WORKDIR /app
 

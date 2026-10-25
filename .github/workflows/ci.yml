@@ -77,7 +77,7 @@ jobs:
           # Surfaced in the UI as a version chip and in /healthz, so a stale
           # cached phone is obvious instead of guesswork.
           build-args: |
-            APP_VERSION=${{ github.sha }}
+            APP_BUILD=${{ github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

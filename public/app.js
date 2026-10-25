@@ -829,8 +829,8 @@ async function refreshApp() {
   ptrRender(80, 'Checking for updates…');
   try {
     const me = await fetch('/api/me', { cache: 'no-store' }).then((r) => r.json());
-    const serverVersion = me?.version ?? null;
-    if (serverVersion && serverVersion !== state.version) {
+    const serverBuild = me?.build ?? null;
+    if (serverBuild && serverBuild !== state.version) {
       ptrRender(80, 'New version — reloading…');
       for (const key of await caches.keys()) await caches.delete(key);
       const regs = (await navigator.serviceWorker?.getRegistrations?.()) ?? [];
@@ -898,7 +898,7 @@ document.addEventListener('visibilitychange', () => {
     fetch('/api/me', { cache: 'no-store' })
       .then((r) => r.json())
       .then((me) => {
-        if (me?.version && state.version && me.version !== state.version) {
+        if (me?.build && state.version && me.build !== state.version) {
           toast('New version available — pull down to refresh');
         }
       })
@@ -922,29 +922,23 @@ async function boot() {
 }
 
 /**
- * Build version, so "did the update land on my phone?" is answered by looking at
- * the screen. CI passes the commit SHA; a local run reports the package version.
+ * The chip shows the human version (v1.0, v1.3, v2.0). The exact build - the
+ * commit SHA - lives in the tooltip, and is what pull-to-refresh compares.
  */
-function prettyVersion(value) {
-  if (!value) return 'v?';
-  if (/^[0-9a-f]{7,40}$/i.test(value)) return `v${value.slice(0, 7)}`;
-  return value.startsWith('v') ? value : `v${value}`;
-}
-
-function setVersion(value) {
-  state.version = value ?? null;
+function setVersion(version, build) {
+  state.version = build ?? version ?? null;
   for (const id of ['version-chip', 'gate-version']) {
     const node = document.getElementById(id);
     if (!node) continue;
-    node.textContent = prettyVersion(value);
-    node.title = `build ${value ?? 'unknown'}`;
+    node.textContent = version || 'v?';
+    node.title = build ? `build ${build.slice(0, 7)}` : 'build unknown';
   }
 }
 
 async function init() {
   try {
     const me = await (await fetch('/api/me')).json();
-    setVersion(me.version);
+    setVersion(me.version, me.build);
     if (me.authed) return boot();
   } catch {
     // fall through to the gate

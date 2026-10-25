@@ -18,7 +18,7 @@ const SHELL = [
   '/vendor/zxing.min.js',
 ];
 
-const VERSION = 'v4';
+const VERSION = 'v5';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -50,6 +50,11 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+
+  // Versioned assets are immutable for a given build, so the network handles
+  // them: no cache lookup, no fallback, nothing a stale worker can corrupt.
+  if (url.pathname.startsWith('/v/')) return;
+
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/cover/')) return;
 
   event.respondWith(

@@ -1,6 +1,6 @@
 {
   "name": "bookshelf",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Self-hosted library catalogue: scan ISBN barcodes with your phone, know what you own.",
   "type": "module",

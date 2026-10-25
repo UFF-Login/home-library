@@ -24,18 +24,36 @@ const HERE = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(HERE, '..', 'public');
 
 /**
- * Build identity, shown in the UI so "am I running the new version?" is answered
- * by looking at the screen instead of guessing at caches. CI passes the commit
- * SHA; a local run falls back to package.json.
+ * Two identities, on purpose:
+ *
+ *   VERSION - the human one, what the user sees: v1.0, v1.3, v2.0. Taken from
+ *             package.json (1.0.0 -> v1.0), overridable with APP_VERSION.
+ *   BUILD   - the exact artifact, used to stamp asset URLs so caches cannot mix
+ *             builds. This must change on every deploy, including deploys that
+ *             keep the same human version, so CI passes the commit SHA.
  */
 const VERSION = (() => {
-  if (process.env.APP_VERSION) return process.env.APP_VERSION;
-  try {
-    return JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')).version ?? 'dev';
-  } catch {
-    return 'dev';
-  }
+  const raw =
+    process.env.APP_VERSION ??
+    (() => {
+      try {
+        return JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')).version;
+      } catch {
+        return 'dev';
+      }
+    })();
+  return formatVersion(raw);
 })();
+
+/** "1.3.0" -> "v1.3"; "2.0" -> "v2.0"; anything unexpected passes through. */
+function formatVersion(raw) {
+  const value = String(raw ?? '').trim();
+  const match = /^v?(\d+)\.(\d+)/.exec(value);
+  if (!match) return value || 'dev';
+  return `v${match[1]}.${match[2]}`;
+}
+
+const BUILD = process.env.APP_BUILD || process.env.APP_VERSION || VERSION;
 const DATA_DIR = resolve(process.env.DATA_DIR ?? join(HERE, '..', 'data'));
 const PORT = Number(process.env.PORT ?? 8080);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -283,7 +301,9 @@ async function serveStatic(req, res, pathname) {
   // cache key itself changes with the build.
   if (ext === '.html') {
     const template = await readFile(target, 'utf8');
-    const html = template.split('__VERSION__').join(encodeURIComponent(VERSION));
+    // Asset URLs carry the BUILD id (changes every deploy), while the UI shows
+    // the human VERSION (v1.0).
+    const html = template.split('__VERSION__').join(encodeURIComponent(BUILD));
     res.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
       'content-length': Buffer.byteLength(html),
@@ -343,7 +363,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/healthz') {
       // version + book count here make a deployment check a single curl, and
       // expose no personal data.
-      return json(res, 200, { ok: true, version: VERSION, books: stats(db).owned });
+      return json(res, 200, { ok: true, version: VERSION, build: BUILD, books: stats(db).owned });
     }
 
     const cookies = parseCookies(req.headers.cookie);
@@ -367,7 +387,7 @@ const server = http.createServer(async (req, res) => {
       res.setHeader('set-cookie', auth.clearCookie());
       return json(res, 200, { ok: true });
     }
-    if (pathname === '/api/me') return json(res, 200, { authed, version: VERSION });
+    if (pathname === '/api/me') return json(res, 200, { authed, version: VERSION, build: BUILD });
 
     // ---- everything else under /api requires a session ----
     if (pathname.startsWith('/api/') && !authed) return json(res, 401, { error: 'auth_required' });

@@ -16,7 +16,12 @@
          build id and strips the prefix when serving. -->
     <link rel="manifest" href="/v/__VERSION__/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-    <link rel="stylesheet" href="/v/__VERSION__/style.css" />
+    <link
+      rel="stylesheet"
+      href="/v/__VERSION__/style.css"
+      data-cfasync="false"
+      onerror="this.onerror=null;this.href='/style.css'"
+    />
   </head>
   <body>
     <!-- Login gate: only visible until the session cookie is accepted. -->
@@ -148,10 +153,12 @@
 
     <div id="toast" class="toast" hidden></div>
 
-    <!-- If the module never loads (wrong proxy config, offline, blocked URL) the
-         page would otherwise render completely blank: #gate starts hidden and
-         app.js is what reveals it. This shows the failure instead, with the exact
-         URL that failed. -->
+    <!-- The app loader is deliberately defensive.
+         #gate starts hidden and app.js is what reveals it, so any failure used to
+         render a blank page. It now tries the versioned URL, then the same URL
+         with a cache-buster, then the plain path - a stale service worker or a
+         proxy that refuses one form cannot stop the app starting. Only if every
+         form fails does it show what happened, with the URLs it tried. -->
     <div id="boot-error" class="boot-error" hidden>
       <h1>Home Library</h1>
       <p id="boot-error-text">The app did not start.</p>
@@ -161,25 +168,44 @@
     <script>
       window.__appStarted = false;
       (function () {
-        var script = '/v/__VERSION__/app.js';
+        var BUILD = '__VERSION__';
+        var sources = [
+          '/v/' + BUILD + '/app.js',
+          '/v/' + BUILD + '/app.js?t=' + Date.now(),
+          '/app.js?t=' + Date.now(),
+        ];
+        var box = document.getElementById('boot-error');
+        var text = document.getElementById('boot-error-text');
         var urlNode = document.getElementById('boot-error-url');
-        window.addEventListener('error', function (event) {
-          if (event.target && event.target.tagName === 'SCRIPT') {
-            document.getElementById('boot-error-text').textContent =
-              'Could not load the app script. The server or a proxy in front of it refused it.';
-            urlNode.textContent = script;
-            document.getElementById('boot-error').hidden = false;
+
+        function fail(detail) {
+          text.textContent = 'Could not start the app.';
+          urlNode.textContent = detail;
+          box.hidden = false;
+        }
+
+        function trySource(index) {
+          if (index >= sources.length) {
+            fail('All script URLs failed: ' + sources.join('  |  '));
+            return;
           }
-        }, true);
+          var element = document.createElement('script');
+          element.type = 'module';
+          element.src = sources[index];
+          element.setAttribute('data-cfasync', 'false');
+          element.onerror = function () {
+            trySource(index + 1);
+          };
+          document.body.appendChild(element);
+        }
+
+        trySource(0);
+
         setTimeout(function () {
           if (window.__appStarted) return;
-          document.getElementById('boot-error-text').textContent =
-            'The app script loaded but did not start.';
-          urlNode.textContent = script;
-          document.getElementById('boot-error').hidden = false;
-        }, 4000);
+          fail('Script loaded but did not run: ' + sources[0]);
+        }, 6000);
       })();
     </script>
-    <script type="module" src="/v/__VERSION__/app.js"></script>
   </body>
 </html>
