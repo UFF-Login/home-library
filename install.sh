@@ -2,12 +2,12 @@
 # One-shot install/update for the server. Run it from the folder that should
 # hold the data: it writes docker-compose.yml there if it is missing.
 #
-#   curl -fsSL https://raw.githubusercontent.com/<owner>/bookshelf/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/UFF-Login/bookshelf/main/install.sh | sh
 #
 # Nothing here needs Node, git, or a compiler - only Docker.
 set -eu
 
-IMAGE="${IMAGE:-ghcr.io/<owner>/bookshelf:latest}"
+IMAGE="${IMAGE:-ghcr.io/UFF-Login/bookshelf:latest}"
 PIN="${BOOKSHELF_PIN:-}"
 PORT="${PORT:-8080}"
 

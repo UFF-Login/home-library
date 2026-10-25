@@ -44,7 +44,7 @@ You need Docker with the compose plugin, and an HTTPS hostname pointed at it.
 
 ```bash
 mkdir -p ~/bookshelf && cd ~/bookshelf
-curl -O https://raw.githubusercontent.com/<owner>/bookshelf/main/docker-compose.yml
+curl -O https://raw.githubusercontent.com/UFF-Login/bookshelf/main/docker-compose.yml
 # edit BOOKSHELF_PIN and the image name in docker-compose.yml
 docker compose up -d
 ```
