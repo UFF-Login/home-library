@@ -16,6 +16,10 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+/* Any element with a display rule of its own ignores the hidden attribute
+   otherwise - which is how the login screen stayed on top of the loaded app. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   background: var(--bg);
@@ -79,6 +83,9 @@ button:active { transform: scale(0.985); }
 
 .view { display: none; padding: 0 16px calc(var(--tab-h) + env(safe-area-inset-bottom) + 16px); }
 .view.active { display: block; }
+
+/* Phone-first, but do not stretch the phone layout across a monitor. */
+#app { max-width: 620px; margin: 0 auto; }
 
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
@@ -227,3 +234,11 @@ button:active { transform: scale(0.985); }
 .field { display: grid; gap: 6px; margin-bottom: 10px; }
 .field label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .inline-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* Desktop: keep the phone column centred instead of stretching to the window.
+   Declared last so these `left`/`transform` values win over .tabs' own rules. */
+@media (min-width: 700px) {
+  .tabs { max-width: 620px; left: 50%; transform: translateX(-50%); border-radius: 16px 16px 0 0; }
+  .topbar { max-width: 620px; margin: 0 auto; }
+  .sheet { max-width: 620px; left: 50%; transform: translateX(-50%); border-radius: 20px 20px 0 0; }
+}

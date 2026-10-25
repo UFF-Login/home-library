@@ -202,13 +202,19 @@ async function serveStatic(req, res, pathname) {
 
   const info = await stat(target);
   const type = MIME[extname(target)] ?? 'application/octet-stream';
-  const isHtml = target.endsWith('.html');
+  const ext = extname(target);
+  // App shell files must never be served stale, or an update would not reach a
+  // phone that has the app installed. Only immutable assets get a long cache.
+  const isShell = ['.html', '.js', '.css', '.webmanifest'].includes(ext) || rel === 'sw.js';
+  const isImmutable = rel.startsWith('vendor/') || rel.startsWith('icons/');
   res.writeHead(200, {
     'content-type': type,
     'content-length': info.size,
-    // HTML and the service worker must never be served stale, or an update to
-    // the app would not reach a phone that has it installed.
-    'cache-control': isHtml || rel === 'sw.js' ? 'no-cache' : 'public, max-age=86400',
+    'cache-control': isShell
+      ? 'no-cache'
+      : isImmutable
+        ? 'public, max-age=31536000, immutable'
+        : 'public, max-age=3600',
   });
   createReadStream(target).pipe(res);
 }

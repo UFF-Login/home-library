@@ -154,11 +154,18 @@ async function startCamera() {
   if (state.scanning) return;
   state.scanning = true;
   $('btn-camera').textContent = 'Stop camera';
-  await startScanner({
+  const started = await startScanner({
     video: $('video'),
     onCode: (isbn) => handleScan(isbn),
     onStatus: setScanStatus,
   });
+  // No camera (denied, absent, or plain http) leaves the button claiming to be
+  // stoppable when nothing is running - put it back.
+  if (!started) {
+    state.scanning = false;
+    $('btn-camera').textContent = 'Try camera again';
+    return;
+  }
   if (await hasTorch()) $('btn-torch').hidden = false;
 }
 

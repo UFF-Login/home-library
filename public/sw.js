@@ -1,8 +1,13 @@
-// Service worker: keeps the shell installable and fast to open on a phone.
+// Service worker: makes the app installable and able to open without a network.
 //
-// Deliberately does NOT cache /api responses. A stale "you don't own this"
-// answer would be worse than a spinner, and the app already keeps its own
-// offline ISBN index in localStorage for the case that matters.
+// Deliberately NOT cache-first. Cache-first served a phone the previous version
+// of style.css after an update and left the login screen stuck on top of the
+// app - the exact failure this rewrite fixes. Network-first keeps one deploy
+// meaning one refresh, and the cache is used only when the network is gone.
+//
+// /api and /cover are never intercepted: a stale "you don't own this" answer
+// would be worse than a spinner, and the app keeps its own offline ISBN index
+// in localStorage for the case that matters.
 const SHELL = [
   '/',
   '/index.html',
@@ -13,10 +18,15 @@ const SHELL = [
   '/vendor/zxing.min.js',
 ];
 
-const VERSION = 'v1';
+const VERSION = 'v2';
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(VERSION).then((cache) => cache.addAll(SHELL)).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches
+      .open(VERSION)
+      .then((cache) => cache.addAll(SHELL))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (event) => {
@@ -37,17 +47,14 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/cover/')) return;
 
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const network = fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            caches.open(VERSION).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        })
-        .catch(() => cached);
-      return cached ?? network;
-    }),
+    fetch(request)
+      .then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(VERSION).then((cache) => cache.put(request, copy));
+        }
+        return response;
+      })
+      .catch(() => caches.match(request).then((cached) => cached ?? caches.match('/index.html'))),
   );
 });

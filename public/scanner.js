@@ -119,19 +119,21 @@ async function fallbackLoop() {
   }
 }
 
+/** Returns true only when a camera is actually streaming, so the UI can put the
+ *  button back to "Start camera" when permission is refused or no camera exists. */
 export async function startScanner({ video, onCode, onStatus }) {
-  if (running) return;
+  if (running) return true;
   videoEl = video;
   onCodeCb = onCode ?? (() => {});
   onStatusCb = onStatus ?? (() => {});
 
   if (!window.isSecureContext) {
     onStatusCb('Camera needs HTTPS. Open this page over https:// — not http://.', 'error');
-    return;
+    return false;
   }
   if (!navigator.mediaDevices?.getUserMedia) {
     onStatusCb('This browser has no camera access. Use Type ISBN instead.', 'error');
-    return;
+    return false;
   }
 
   try {
@@ -152,7 +154,7 @@ export async function startScanner({ video, onCode, onStatus }) {
           ? 'No camera found on this device.'
           : `Camera unavailable (${name || 'unknown'}). Use Type ISBN instead.`;
     onStatusCb(message, 'error');
-    return;
+    return false;
   }
 
   videoEl.srcObject = stream;
@@ -178,6 +180,7 @@ export async function startScanner({ video, onCode, onStatus }) {
       stopScanner();
     });
   }
+  return true;
 }
 
 export function stopScanner() {
