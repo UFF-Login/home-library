@@ -30,13 +30,17 @@
         />
         <button type="submit" class="primary">Unlock</button>
         <p id="gate-error" class="error" role="alert"></p>
+        <p class="version gate-version" id="gate-version">v—</p>
       </form>
     </div>
 
     <main id="app" hidden>
       <header class="topbar">
         <div>
-          <div class="eyebrow" id="eyebrow">Scanning</div>
+          <div class="eyebrow-row">
+            <span class="version" id="version-chip" title="build version">v—</span>
+            <div class="eyebrow" id="eyebrow">Scanning</div>
+          </div>
           <h1 class="title" id="view-title">Scan a book</h1>
         </div>
         <div class="topbar-count" id="owned-count"></div>

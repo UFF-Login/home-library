@@ -8,6 +8,10 @@ ENV NODE_ENV=production \
     PORT=8080 \
     DATA_DIR=/data
 
+# Build identity, surfaced in the UI and in /healthz. CI passes the commit SHA.
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
+
 WORKDIR /app
 
 # Only these three paths are the app. Everything else in the repo (tests, CI,

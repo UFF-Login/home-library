@@ -811,9 +811,30 @@ async function boot() {
   }
 }
 
+/**
+ * Build version, so "did the update land on my phone?" is answered by looking at
+ * the screen. CI passes the commit SHA; a local run reports the package version.
+ */
+function prettyVersion(value) {
+  if (!value) return 'v?';
+  if (/^[0-9a-f]{7,40}$/i.test(value)) return `v${value.slice(0, 7)}`;
+  return value.startsWith('v') ? value : `v${value}`;
+}
+
+function setVersion(value) {
+  state.version = value ?? null;
+  for (const id of ['version-chip', 'gate-version']) {
+    const node = document.getElementById(id);
+    if (!node) continue;
+    node.textContent = prettyVersion(value);
+    node.title = `build ${value ?? 'unknown'}`;
+  }
+}
+
 async function init() {
   try {
     const me = await (await fetch('/api/me')).json();
+    setVersion(me.version);
     if (me.authed) return boot();
   } catch {
     // fall through to the gate

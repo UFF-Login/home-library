@@ -77,7 +77,16 @@ button:active { transform: scale(0.985); }
   background: linear-gradient(var(--bg) 70%, transparent);
   backdrop-filter: blur(8px);
 }
+.eyebrow-row { display: flex; align-items: center; gap: 8px; }
 .eyebrow { font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+/* Build version: the first thing to check when "I updated but nothing changed". */
+.version {
+  font-size: 11px; font-variant-numeric: tabular-nums; letter-spacing: 0.02em;
+  color: var(--accent); background: rgba(224, 163, 74, 0.12);
+  border: 1px solid rgba(224, 163, 74, 0.3); border-radius: 5px;
+  padding: 1px 5px; white-space: nowrap;
+}
+.gate-version { margin: 6px 0 0; color: var(--muted); background: none; border: 0; }
 .title { font-size: 22px; }
 .topbar-count { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; text-align: right; }
 

@@ -7,7 +7,7 @@
 //    shop with bad signal must not leave the UI hanging;
 //  - the frontend is served from here, so the container is the whole app.
 import http from 'node:http';
-import { createReadStream, existsSync, mkdirSync, accessSync, constants as fsConstants } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, accessSync, readFileSync, constants as fsConstants } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { join, extname, resolve, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +22,20 @@ import { ensureCover, coverFile, hasCover, coverMissPending, clearCoverMiss } fr
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(HERE, '..', 'public');
+
+/**
+ * Build identity, shown in the UI so "am I running the new version?" is answered
+ * by looking at the screen instead of guessing at caches. CI passes the commit
+ * SHA; a local run falls back to package.json.
+ */
+const VERSION = (() => {
+  if (process.env.APP_VERSION) return process.env.APP_VERSION;
+  try {
+    return JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')).version ?? 'dev';
+  } catch {
+    return 'dev';
+  }
+})();
 const DATA_DIR = resolve(process.env.DATA_DIR ?? join(HERE, '..', 'data'));
 const PORT = Number(process.env.PORT ?? 8080);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -306,7 +320,11 @@ const server = http.createServer(async (req, res) => {
   const method = req.method ?? 'GET';
 
   try {
-    if (pathname === '/healthz') return json(res, 200, { ok: true, books: stats(db).owned });
+    if (pathname === '/healthz') {
+      // version + book count here make a deployment check a single curl, and
+      // expose no personal data.
+      return json(res, 200, { ok: true, version: VERSION, books: stats(db).owned });
+    }
 
     const cookies = parseCookies(req.headers.cookie);
     const authed = auth.isAuthed(cookies);
@@ -329,7 +347,7 @@ const server = http.createServer(async (req, res) => {
       res.setHeader('set-cookie', auth.clearCookie());
       return json(res, 200, { ok: true });
     }
-    if (pathname === '/api/me') return json(res, 200, { authed });
+    if (pathname === '/api/me') return json(res, 200, { authed, version: VERSION });
 
     // ---- everything else under /api requires a session ----
     if (pathname.startsWith('/api/') && !authed) return json(res, 401, { error: 'auth_required' });
