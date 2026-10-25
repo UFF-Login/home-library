@@ -418,7 +418,9 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         isbn13: lookupMatch[1],
         found: meta.found,
-        work: meta.work,
+        // The ISBN belongs to the work handed back to the client: without it the
+        // scan card cannot build a cover URL and asks for /cover/undefined.jpg.
+        work: meta.work ? { ...meta.work, isbn13: lookupMatch[1] } : null,
         series,
         cached: meta.cached,
       });

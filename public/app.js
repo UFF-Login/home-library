@@ -377,9 +377,13 @@ const VERDICT_TEXT = {
  * If the image still fails, it retries once with a timestamp before giving up -
  * covers are fetched on demand, so the first request can be slow.
  */
-function coverHtml(book) {
-  if (!book) return `<div class="cover">no cover</div>`;
-  const isbn = esc(book.isbn13);
+function coverHtml(book, fallbackIsbn) {
+  // The scan card's preview comes from the lookup API, which historically had no
+  // isbn13 - so the fallback is what makes the cover appear before the book is
+  // added to the catalogue.
+  const isbnValue = book?.isbn13 ?? fallbackIsbn ?? null;
+  if (!isbnValue) return `<div class="cover">no cover</div>`;
+  const isbn = esc(isbnValue);
   const bust = encodeURIComponent(state.version || 'dev');
   return `<div class="cover"><img src="/cover/${isbn}.jpg?b=${bust}" alt="" loading="lazy"
     onerror="if(this.dataset.retry){this.replaceWith(Object.assign(document.createElement('div'),{className:'cover',textContent:'no cover'}))}else{this.dataset.retry=1;this.src='/cover/${isbn}.jpg?b=${bust}&r='+Date.now()}" /></div>`;
@@ -444,7 +448,7 @@ function resultCard(data) {
   return `<div class="card v-${esc(verdict)}">
     <div class="verdict"><span class="dot"></span>${esc(VERDICT_TEXT[verdict] ?? verdict)}</div>
     <div class="book-row">
-      ${coverHtml(book)}
+      ${coverHtml(book, data.isbn13)}
       <div class="book-meta">
         <div class="book-title">${esc(noRecord ? 'No catalogue record' : title)}</div>
         <div class="book-sub">${esc(meta.join(' · '))}</div>
@@ -546,7 +550,7 @@ function openDetail(isbn) {
 
   openSheet(`
     <div class="book-row" style="margin-bottom:14px">
-      ${coverHtml(book)}
+      ${coverHtml(book, isbn)}
       <div class="book-meta">
         <div class="book-title">${esc(book.title)}</div>
         <div class="book-sub">${esc((book.authors ?? []).join(', '))}</div>
