@@ -18,7 +18,7 @@ const SHELL = [
   '/vendor/zxing.min.js',
 ];
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -61,6 +61,15 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(request).then((cached) => cached ?? caches.match('/index.html'))),
+      // The offline fallback must only ever answer a NAVIGATION with HTML.
+      // Returning index.html for a failed /app.js request made the browser parse
+      // HTML as JavaScript, which produced a completely blank page.
+      .catch(() =>
+        caches.match(request).then((cached) => {
+          if (cached) return cached;
+          if (request.mode === 'navigate') return caches.match('/index.html');
+          return Response.error();
+        }),
+      ),
   );
 });

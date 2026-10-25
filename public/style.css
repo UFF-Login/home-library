@@ -69,6 +69,15 @@ button:active { transform: scale(0.985); }
 .ghost { background: transparent; }
 .danger { color: var(--warn); border-color: #4a2a2a; }
 
+/* Shown only when the app script never runs - better than a blank page. */
+.boot-error {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-content: center;
+  gap: 10px; padding: 24px; text-align: center; background: var(--bg);
+}
+.boot-error h1 { font-size: 26px; }
+.boot-error p { margin: 0; color: var(--muted); max-width: 30ch; }
+.boot-error-url { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: var(--warn); word-break: break-all; }
+
 /* ---------- chrome ---------- */
 .topbar {
   position: sticky; top: 0; z-index: 20;

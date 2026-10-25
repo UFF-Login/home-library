@@ -6,6 +6,10 @@
 // returns - and it still answers with no signal at all.
 import { startScanner, stopScanner, setTorch, hasTorch, getTorchState } from './scanner.js';
 
+// Tells index.html's inline guard that the module actually executed, so a failed
+// load shows a message instead of an empty page.
+window.__appStarted = true;
+
 const INDEX_KEY = 'bookshelf.isbnIndex.v1';
 const state = {
   tab: 'scan',

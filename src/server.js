@@ -264,7 +264,12 @@ function pickFields(body = {}) {
 }
 
 async function serveStatic(req, res, pathname) {
-  const rel = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
+  // Path-based asset versioning: /v/<build>/app.js serves public/app.js.
+  // A query string (?v=) was the first attempt, but a reverse proxy in front of
+  // the app refused those URLs and the page rendered blank, so the build id goes
+  // in the path instead - every proxy handles paths.
+  const unversioned = pathname.replace(/^\/v\/[^/]+\//, '/');
+  const rel = unversioned === '/' ? 'index.html' : unversioned.replace(/^\/+/, '');
   const target = normalize(join(PUBLIC_DIR, rel));
   // Path traversal guard: the resolved path must stay inside public/.
   if (!target.startsWith(PUBLIC_DIR)) return json(res, 403, { error: 'forbidden' });

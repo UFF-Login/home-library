@@ -9,13 +9,14 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Home Library</title>
-    <link rel="manifest" href="/manifest.webmanifest?v=__VERSION__" />
+    <!-- /v/<build-id>/ makes every asset a distinct URL per build, so a cached
+         copy (browser, service worker or reverse proxy) can never satisfy a newer
+         page. It lives in the PATH, not a query string: a proxy in front of this
+         app refused ?v= URLs and served a blank page. The server substitutes the
+         build id and strips the prefix when serving. -->
+    <link rel="manifest" href="/v/__VERSION__/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-    <!-- ?v=__VERSION__ makes each build a distinct cache key. Without it a stale
-         service worker can serve the previous app.js under the same URL, which
-         shows up as a new page running old code. The server substitutes the real
-         build id at request time. -->
-    <link rel="stylesheet" href="/style.css?v=__VERSION__" />
+    <link rel="stylesheet" href="/v/__VERSION__/style.css" />
   </head>
   <body>
     <!-- Login gate: only visible until the session cookie is accepted. -->
@@ -147,6 +148,38 @@
 
     <div id="toast" class="toast" hidden></div>
 
-    <script type="module" src="/app.js?v=__VERSION__"></script>
+    <!-- If the module never loads (wrong proxy config, offline, blocked URL) the
+         page would otherwise render completely blank: #gate starts hidden and
+         app.js is what reveals it. This shows the failure instead, with the exact
+         URL that failed. -->
+    <div id="boot-error" class="boot-error" hidden>
+      <h1>Home Library</h1>
+      <p id="boot-error-text">The app did not start.</p>
+      <p id="boot-error-url" class="boot-error-url"></p>
+      <button onclick="location.reload()" class="primary">Reload</button>
+    </div>
+    <script>
+      window.__appStarted = false;
+      (function () {
+        var script = '/v/__VERSION__/app.js';
+        var urlNode = document.getElementById('boot-error-url');
+        window.addEventListener('error', function (event) {
+          if (event.target && event.target.tagName === 'SCRIPT') {
+            document.getElementById('boot-error-text').textContent =
+              'Could not load the app script. The server or a proxy in front of it refused it.';
+            urlNode.textContent = script;
+            document.getElementById('boot-error').hidden = false;
+          }
+        }, true);
+        setTimeout(function () {
+          if (window.__appStarted) return;
+          document.getElementById('boot-error-text').textContent =
+            'The app script loaded but did not start.';
+          urlNode.textContent = script;
+          document.getElementById('boot-error').hidden = false;
+        }, 4000);
+      })();
+    </script>
+    <script type="module" src="/v/__VERSION__/app.js"></script>
   </body>
 </html>
