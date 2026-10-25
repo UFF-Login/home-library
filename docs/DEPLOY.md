@@ -37,17 +37,20 @@ services:
       - no-new-privileges:true
 ```
 
-## 3. Pull credentials (only if the GHCR package stays private)
+## 3. Pull credentials: none needed
 
-Create a GitHub token with **read:packages** (Settings → Developer settings →
-Personal access tokens → Fine-grained, or the classic token with `read:packages`),
-then once:
+The GHCR package `ghcr.io/UFF-Login/bookshelf` is **public**, so `docker compose
+pull` works with no login and no token on the server.
+
+Only if it is ever switched back to private: create a token with
+`read:packages`, then once on the server:
 
 ```bash
 echo <TOKEN> | docker login ghcr.io -u UFF-Login --password-stdin
 ```
 
-If the package is made public, skip this — `docker compose pull` just works.
+A public *image* does not expose your catalogue — that lives only in `./data` on
+your server, behind the PIN.
 
 ## 4. Start
 

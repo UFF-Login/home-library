@@ -81,14 +81,16 @@ docker compose pull && docker compose up -d
 Images are published by GitHub Actions to GHCR for both `linux/amd64` and
 `linux/arm64` on every push to `main`, tagged `latest` and `sha-<short>`.
 
-If the package is private, the server needs one login:
+The GHCR package is **public**, so the server needs no login and no token:
 
 ```bash
-echo <github-pat-with-read:packages> | docker login ghcr.io -u <github-user> --password-stdin
+docker pull ghcr.io/uff-login/bookshelf:latest    # works anonymously
 ```
 
-Simplest alternative: make the GHCR package public. The app itself is still PIN
-protected; public only means the *image* is pullable.
+Public means the *image* is pullable. The catalogue itself never leaves the
+server: it lives in `./data` behind the PIN. If the package is ever made private
+again, the server needs `docker login ghcr.io -u UFF-Login --password-stdin`
+with a token that has `read:packages`.
 
 ---
 

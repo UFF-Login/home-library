@@ -10,7 +10,8 @@ services:
     restart: unless-stopped
 
     ports:
-      # Bind to all interfaces so your reverse proxy can reach it. If the proxy
+      # Public GHCR package: no docker login needed on the server.
+    # Bind to all interfaces so your reverse proxy can reach it. If the proxy
       # runs on the same host you can lock it down to 127.0.0.1:8080:8080.
       - "8080:8080"
 
