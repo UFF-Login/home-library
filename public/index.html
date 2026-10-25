@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- viewport-fit=cover + safe-area padding is what makes it usable on a
+         notched phone without the tab bar sliding under the home indicator. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#12100e" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Bookshelf</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.png" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <!-- Login gate: only visible until the session cookie is accepted. -->
+    <div id="gate" class="gate" hidden>
+      <form id="gate-form" class="gate-card">
+        <h1>Bookshelf</h1>
+        <p>Enter your PIN to unlock the catalogue.</p>
+        <input
+          id="pin"
+          type="password"
+          inputmode="numeric"
+          autocomplete="current-password"
+          placeholder="PIN"
+          maxlength="12"
+          required
+        />
+        <button type="submit" class="primary">Unlock</button>
+        <p id="gate-error" class="error" role="alert"></p>
+      </form>
+    </div>
+
+    <main id="app" hidden>
+      <header class="topbar">
+        <div>
+          <div class="eyebrow" id="eyebrow">Scanning</div>
+          <h1 class="title" id="view-title">Scan a book</h1>
+        </div>
+        <div class="topbar-count" id="owned-count"></div>
+      </header>
+
+      <!-- ================= SCAN ================= -->
+      <section class="view active" id="view-scan">
+        <div class="scanner">
+          <video id="video" playsinline muted autoplay></video>
+          <div class="reticle" aria-hidden="true">
+            <span class="corner tl"></span><span class="corner tr"></span>
+            <span class="corner bl"></span><span class="corner br"></span>
+            <div class="scanline"></div>
+          </div>
+          <div class="scanner-status" id="scan-status">Starting camera…</div>
+        </div>
+
+        <div class="scan-actions">
+          <button id="btn-camera" class="ghost">Stop camera</button>
+          <button id="btn-torch" class="ghost" hidden>Light</button>
+          <button id="btn-manual" class="ghost">Type ISBN</button>
+        </div>
+
+        <div id="manual-panel" class="manual" hidden>
+          <label for="manual-isbn">ISBN (the number under the barcode)</label>
+          <div class="row">
+            <input id="manual-isbn" inputmode="numeric" placeholder="9780590353403" />
+            <button id="btn-manual-go" class="primary">Look up</button>
+          </div>
+        </div>
+
+        <div id="scan-result" class="result"></div>
+      </section>
+
+      <!-- ================= SHELF ================= -->
+      <section class="view" id="view-shelf">
+        <div class="shelf-tools">
+          <input id="search" type="search" placeholder="Search title, author, series or ISBN" />
+          <div class="chips" id="shelf-filters">
+            <button class="chip active" data-filter="">All</button>
+            <button class="chip" data-filter="owned">Owned</button>
+            <button class="chip" data-filter="wishlist">Wishlist</button>
+            <button class="chip" data-filter="loaned">On loan</button>
+          </div>
+        </div>
+        <div id="shelf-grid" class="grid"></div>
+        <p id="shelf-empty" class="empty" hidden>Nothing here yet. Scan a barcode to start.</p>
+      </section>
+
+      <!-- ================= SERIES ================= -->
+      <section class="view" id="view-series">
+        <p class="hint">Series are detected from the barcode data. Wrong series or volume? Open the book and fix it — the missing-number maths uses your corrections.</p>
+        <div id="series-list" class="series-list"></div>
+        <p id="series-empty" class="empty" hidden>No series detected yet.</p>
+      </section>
+
+      <!-- ================= MORE ================= -->
+      <section class="view" id="view-more">
+        <div class="stat-grid" id="stat-grid"></div>
+        <div class="panel">
+          <h2>Backup</h2>
+          <p class="hint">A JSON file of the whole catalogue. Download it before any update; restore is a scan-free way back if a disk dies.</p>
+          <a class="button primary" href="/api/export" download>Download catalogue</a>
+        </div>
+        <div class="panel">
+          <h2>Recent scans</h2>
+          <div id="recent-scans" class="recent"></div>
+        </div>
+        <div class="panel">
+          <h2>Session</h2>
+          <button id="btn-logout" class="ghost">Lock the app</button>
+        </div>
+      </section>
+    </main>
+
+    <nav id="tabs" class="tabs" hidden>
+      <button class="tab active" data-tab="scan"><span>⌗</span>Scan</button>
+      <button class="tab" data-tab="shelf"><span>▤</span>Shelf</button>
+      <button class="tab" data-tab="series"><span>❏</span>Series</button>
+      <button class="tab" data-tab="more"><span>⚙</span>More</button>
+    </nav>
+
+    <!-- Bottom sheet: scan answer and book detail share one surface so the
+         phone never has two competing overlays. -->
+    <div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
+    <div id="sheet" class="sheet" hidden role="dialog" aria-modal="true">
+      <div class="sheet-grip"></div>
+      <div id="sheet-body"></div>
+    </div>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

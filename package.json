@@ -1,0 +1,21 @@
+{
+  "name": "bookshelf",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted library catalogue: scan ISBN barcodes with your phone, know what you own.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test tests/*.test.js",
+    "dev": "node --watch src/server.js",
+    "icons": "node tools/make-icons.mjs",
+    "vendor": "cp node_modules/@zxing/library/umd/index.min.js public/vendor/zxing.min.js"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@zxing/library": "^0.21.3"
+  }
+}

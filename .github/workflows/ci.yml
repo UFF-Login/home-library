@@ -1,0 +1,80 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # There are no runtime dependencies, so this is just a sanity check that
+      # package.json is still valid rather than a real install.
+      - run: npm install --package-lock-only --ignore-scripts
+
+      - name: Unit and database tests
+        run: npm test
+
+      - name: Boot the server and hit the health endpoint
+        run: |
+          BOOKSHELF_PIN=123456 PORT=8080 DATA_DIR=/tmp/bsdata node src/server.js &
+          SERVER_PID=$!
+          for i in $(seq 1 20); do
+            if curl -sf http://127.0.0.1:8080/healthz; then ready=1; break; fi
+            sleep 0.5
+          done
+          kill $SERVER_PID
+          test "$ready" = "1" || { echo "server did not become healthy"; exit 1; }
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    # Only publish from main/tags; pull requests just build to prove it compiles.
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Work out image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=semver,pattern={{version}}
+
+      # arm64 is included because a home server or NAS is very often arm.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

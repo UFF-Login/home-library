@@ -1,0 +1,38 @@
+# Deploy on the server with:  docker compose up -d
+# Update with:                docker compose pull && docker compose up -d
+#
+# The image is built by GitHub Actions and published to GHCR, so the server
+# needs nothing but Docker - no Node, no compiler, no source checkout.
+services:
+  bookshelf:
+    # Replace <owner> with your GitHub username once the first build has run.
+    image: ghcr.io/<owner>/bookshelf:latest
+    container_name: bookshelf
+    restart: unless-stopped
+
+    ports:
+      # Bind to all interfaces so your reverse proxy can reach it. If the proxy
+      # runs on the same host you can lock it down to 127.0.0.1:8080:8080.
+      - "8080:8080"
+
+    environment:
+      # This PIN is the only thing between the open internet and your library.
+      # Change it, and set it here rather than relying on the generated one.
+      BOOKSHELF_PIN: "change-me-6-digits"
+      TZ: Australia/Sydney
+
+    volumes:
+      # ./data holds bookshelf.db plus the cached cover images. Back this folder
+      # up, or use the Download catalogue button, which is the same data as JSON.
+      - ./data:/data
+
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+    # Defence in depth: caps the damage if the process is ever exploited.
+    read_only: false
+    security_opt:
+      - no-new-privileges:true
