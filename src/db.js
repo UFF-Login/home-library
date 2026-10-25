@@ -251,7 +251,9 @@ export function saveBook(db, { isbn13, work, state = 'owned', fields = {} }) {
         fields.my_rating ?? null,
         fields.notes ?? null,
         fields.location ?? null,
-        fields.owner ?? null,
+        // A book you own belongs to you unless told otherwise; a wishlist entry
+        // has no owner yet.
+        fields.owner ?? (state === 'owned' ? 'Me' : null),
         fields.loaned_to ?? null,
         fields.loaned_at ?? null,
         at,

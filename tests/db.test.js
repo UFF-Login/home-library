@@ -159,3 +159,20 @@ test('deleting removes the copy and its orphaned work', () => {
   assert.equal(findBook(db, '9780590453677'), null);
   assert.equal(deleteBook(db, '9780590453677'), false);
 });
+
+test('a book you add is owned by you by default, a wishlist entry is not', () => {
+  const db = freshDb();
+  const owned = saveBook(db, { isbn13: '9780590453677', work: goosebumps(1, 'Welcome to Dead House') });
+  assert.equal(owned.owner, 'Me');
+
+  const wished = saveBook(db, {
+    isbn13: '9780590453660',
+    work: goosebumps(2, 'Stay Out of the Basement'),
+    state: 'wishlist',
+  });
+  assert.equal(wished.owner, null, 'an unwished book has no owner until you buy it');
+
+  // Setting an owner explicitly is respected.
+  const explicit = saveBook(db, { isbn13: '9780590453691', work: goosebumps(3, 'Monster Blood'), fields: { owner: 'Dad' } });
+  assert.equal(explicit.owner, 'Dad');
+});

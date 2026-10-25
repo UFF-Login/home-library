@@ -267,6 +267,39 @@ button:active { transform: scale(0.985); }
   max-width: 90vw; text-align: center;
 }
 
+/* ---------- ratings: the web's opinion vs yours, equal weight ---------- */
+.rating-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.rating-pill {
+  display: inline-flex; align-items: baseline; gap: 4px;
+  font-size: 12px; font-weight: 650; padding: 3px 8px; border-radius: 999px;
+  border: 1px solid transparent; font-variant-numeric: tabular-nums;
+}
+.rating-pill small { font-weight: 500; opacity: 0.75; font-size: 11px; }
+/* Web rating: cool blue. Yours: warm amber. Deliberately different hues so the
+   two are never confused at a glance. */
+.rating-web { background: rgba(106, 163, 224, 0.14); border-color: rgba(106, 163, 224, 0.4); color: #9cc4ee; }
+.rating-mine { background: rgba(224, 163, 74, 0.14); border-color: rgba(224, 163, 74, 0.45); color: var(--accent); }
+
+.ratings { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 12px; }
+.rating-card {
+  border-radius: 12px; padding: 10px 12px; display: grid; gap: 4px;
+  border: 1px solid var(--line); background: var(--card-2);
+}
+.rating-card.rating-web { border-color: rgba(106, 163, 224, 0.35); }
+.rating-card.rating-mine { border-color: rgba(224, 163, 74, 0.35); }
+.rating-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
+.rating-card.rating-web .rating-value { color: #9cc4ee; }
+.rating-card.rating-mine .rating-value { color: var(--accent); }
+.rating-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.rating-count { font-size: 11px; color: var(--muted); }
+
+.stars { display: flex; gap: 2px; }
+.stars .star {
+  background: none; border: 0; padding: 0 1px; font-size: 20px; line-height: 1;
+  color: #4a4238; cursor: pointer; border-radius: 6px;
+}
+.stars .star.on { color: var(--accent); }
+
 /* Publisher blurb from Open Library or Google Books, shown in the book sheet. */
 .book-description {
   margin: 0 0 12px; font-size: 14px; line-height: 1.5; color: var(--muted);

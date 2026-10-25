@@ -389,6 +389,24 @@ function coverHtml(book, fallbackIsbn) {
     onerror="if(this.dataset.retry){this.replaceWith(Object.assign(document.createElement('div'),{className:'cover',textContent:'no cover'}))}else{this.dataset.retry=1;this.src='/cover/${isbn}.jpg?b=${bust}&r='+Date.now()}" /></div>`;
 }
 
+/**
+ * Web rating and your own, side by side and colour-coded. The web one is only
+ * present when a provider had data; yours only exists once you have rated it.
+ */
+function ratingPills(book) {
+  if (!book) return '';
+  const pills = [];
+  if (book.rating) {
+    pills.push(
+      `<span class="rating-pill rating-web">★ ${esc(book.rating)}${book.ratingsCount ? ` <small>${esc(book.ratingsCount)}</small>` : ''}</span>`,
+    );
+  }
+  if (book.myRating) {
+    pills.push(`<span class="rating-pill rating-mine">★ ${esc(book.myRating)} <small>yours</small></span>`);
+  }
+  return pills.length ? `<div class="rating-pills">${pills.join('')}</div>` : '';
+}
+
 function seriesNote(series, volume) {
   if (!series) return '';
   const gaps = (series.ranges ?? []).filter((range) => {
@@ -457,6 +475,7 @@ function resultCard(data) {
         <div class="book-extra">${esc(data.isbn13 ?? '')}</div>
       </div>
     </div>
+    ${ratingPills(book)}
     ${seriesNote(data.series, book?.volume)}
     ${noRecord ? '<p class="book-sub">Open Library has nothing for this ISBN. Add it by hand — title and author are all that is needed.</p>' : ''}
     ${actions}
@@ -556,7 +575,7 @@ function openDetail(isbn) {
       <div class="book-meta">
         <div class="book-title">${esc(book.title)}</div>
         <div class="book-sub">${esc((book.authors ?? []).join(', '))}</div>
-        <div class="book-extra">${esc([book.series && book.volume ? `${book.series} #${book.volume}` : book.series, book.published, book.pages ? `${book.pages} pp` : null].filter(Boolean).join(' · '))}</div>
+        <div class="book-extra">${esc([book.owner, book.series && book.volume ? `${book.series} #${book.volume}` : book.series, book.publisher, book.published, book.pages ? `${book.pages} pp` : null].filter(Boolean).join(' · '))}</div>
         ${book.rating ? `<div class="book-extra">★ ${esc(book.rating)} <span>(${esc(book.ratingsCount ?? 0)})</span></div>` : ''}
       </div>
     </div>
@@ -581,12 +600,20 @@ function openDetail(isbn) {
       </div>
     </div>
 
-    <div class="field">
-      <label>My rating</label>
-      <div class="btn-row" id="rating-row">
-        ${[1, 2, 3, 4, 5]
-          .map((n) => `<button class="${book.myRating === n ? 'primary' : ''}" data-rate="${n}">${'★'.repeat(n)}</button>`)
-          .join('')}
+    <div class="ratings">
+      <div class="rating-card rating-web">
+        <span class="rating-label">From the web</span>
+        <div class="rating-value">${book.rating ? `★ ${esc(book.rating)}` : '—'}</div>
+        <div class="rating-count">${book.ratingsCount ? `${esc(book.ratingsCount)} ratings` : 'no data'}</div>
+      </div>
+      <div class="rating-card rating-mine">
+        <span class="rating-label">Your rating</span>
+        <div class="stars" id="rating-row">
+          ${[1, 2, 3, 4, 5]
+            .map((n) => `<button class="star ${book.myRating >= n ? 'on' : ''}" data-rate="${n}" aria-label="${n} of 5">★</button>`)
+            .join('')}
+        </div>
+        <div class="rating-count">${book.myRating ? `you said ${book.myRating}/5` : 'not rated yet'}</div>
       </div>
     </div>
 
@@ -633,9 +660,12 @@ function openDetail(isbn) {
     button.addEventListener('click', () => {
       const value = Number(button.dataset.rate);
       draft.myRating = draft.myRating === value ? null : value;
-      for (const other of $('sheet-body').querySelectorAll('[data-rate]')) {
-        other.classList.toggle('primary', Number(other.dataset.rate) === draft.myRating);
+      // Fill up to the chosen star; tapping the same star again clears it.
+      for (const star of $('sheet-body').querySelectorAll('[data-rate]')) {
+        star.classList.toggle('on', Number(star.dataset.rate) <= (draft.myRating ?? 0));
       }
+      const note = $('rating-row')?.parentElement?.querySelector('.rating-count');
+      if (note) note.textContent = draft.myRating ? `you said ${draft.myRating}/5` : 'not rated yet';
     }),
   );
 
