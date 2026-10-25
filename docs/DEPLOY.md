@@ -141,9 +141,33 @@ Also: the app's **More → Download catalogue** button gives the same data as JS
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
+| `Error: unable to open database file` in a restart loop | the mounted `./data` belongs to root, and the app runs as uid 1000 | current images fix this themselves; if not, `sudo chown -R 1000:1000 ./data` then `docker compose up -d` |
 | Camera never starts, black video | page served over `http://` | use `https://`, check the padlock |
-| `502 Bad Gateway` in NPM | wrong forward port/host | port `8080`, host = reachable IP |
-| Container `unhealthy` | healthcheck cannot reach the app | `docker compose logs`; check `PORT` is still 8080 inside |
-| `denied` on pull | private package, no login | step 3 |
-| Forgot the PIN | PIN hash is in the DB | set `BOOKSHELF_PIN` in compose, `docker compose up -d` |
+| `502 Bad Gateway` in NPM | wrong forward port/host | forward to the **host** port you published (8050, say) — not 8080 |
+| Container `unhealthy` | healthcheck cannot reach the app | `docker compose logs`; the healthcheck uses port 8080 *inside* the container, so a changed host port needs no change here |
+| `denied` on pull | package is private again | make it public, or `docker login ghcr.io` |
+| Forgot the PIN | PIN hash is in the DB | set `BOOKSHELF_PIN` in `.env`, `docker compose up -d` |
 | Book found twice | different ISBNs for the same book (different editions) | that is real; each ISBN is a separate edition. Delete the duplicate. |
+
+### Changing the host port
+
+Only the left-hand side of the mapping changes — the container always listens on
+8080 internally:
+
+```yaml
+    ports:
+      - "8050:8080"     # host 8050 -> container 8080
+```
+
+Point the reverse proxy at **8050**. Do not change `PORT`; the healthcheck
+depends on 8080 inside the container.
+
+### Why the data folder caused that error
+
+`./data:/data` is a bind mount, so it keeps the *host's* owner — normally
+`root:root 755`. The app runs as uid 1000 and cannot create a file there, so
+SQLite reports `unable to open database file` and the container restarts in a
+loop. The image now fixes the ownership itself at startup (as root, then
+immediately drops to uid 1000 before running the app). If you run the container
+unprivileged via compose `user:`, that fix cannot happen and the app prints the
+exact `chown` command to run instead.

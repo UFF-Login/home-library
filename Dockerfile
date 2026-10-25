@@ -16,12 +16,23 @@ COPY --chown=node:node package.json ./
 COPY --chown=node:node src ./src
 COPY --chown=node:node public ./public
 
+# su-exec lets the entrypoint drop from root to uid 1000 after fixing /data.
+RUN apk add --no-cache su-exec \
+ && mkdir -p /data \
+ && chown node:node /data
+
+# A bind-mounted ./data keeps the HOST's ownership (usually root:root 755), which
+# uid 1000 cannot write - that is the "unable to open database file" crash loop.
+# The entrypoint runs as root only long enough to chown /data, then execs as node.
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+# Normalise line endings: a CRLF shebang copied from a Windows checkout would
+# fail to execute at all.
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
+ && chmod +x /usr/local/bin/docker-entrypoint.sh
+
 # The SQLite database and cached covers live here; mount a volume on /data or
 # the catalogue is lost with the container.
-RUN mkdir -p /data && chown node:node /data
 VOLUME ["/data"]
-
-USER node
 EXPOSE 8080
 
 # node:sqlite prints an ExperimentalWarning on Node 22. Disable precisely that
@@ -29,4 +40,7 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD wget -q -O- http://127.0.0.1:8080/healthz || exit 1
 
+# Deliberately no USER directive: the entrypoint needs root to hand /data to
+# uid 1000, and drops to "node" itself. Set `user:` in compose to skip that.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "--disable-warning=ExperimentalWarning", "src/server.js"]

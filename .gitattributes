@@ -1,0 +1,7 @@
+# Shell scripts and the container entrypoint are executed inside Linux images.
+# A CRLF shebang fails there, so normalise line endings on the way in.
+*.sh text eol=lf
+docker-entrypoint.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.js text eol=lf

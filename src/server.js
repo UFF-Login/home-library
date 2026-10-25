@@ -7,7 +7,7 @@
 //    shop with bad signal must not leave the UI hanging;
 //  - the frontend is served from here, so the container is the whole app.
 import http from 'node:http';
-import { createReadStream, existsSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, accessSync, constants as fsConstants } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { join, extname, resolve, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +25,62 @@ const PUBLIC_DIR = join(HERE, '..', 'public');
 const DATA_DIR = resolve(process.env.DATA_DIR ?? join(HERE, '..', 'data'));
 const PORT = Number(process.env.PORT ?? 8080);
 const HOST = process.env.HOST ?? '0.0.0.0';
+
+/**
+ * A bind-mounted data folder keeps the HOST's ownership. If the container is not
+ * allowed to fix that (compose `user:`, Kubernetes securityContext), SQLite's
+ * failure is the bare string "unable to open database file", which tells an
+ * operator nothing. Fail with the actual cause and the actual command instead.
+ */
+function assertDataDirWritable(dir) {
+  const uid = process.getuid?.() ?? 'unknown';
+  const dbFile = join(dir, 'bookshelf.db');
+
+  let problem = null;
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (error) {
+    problem = error;
+  }
+  if (!problem) {
+    try {
+      accessSync(dir, fsConstants.W_OK | fsConstants.X_OK);
+    } catch {
+      problem = new Error('folder is not writable');
+    }
+  }
+  if (!problem && existsSync(dbFile)) {
+    try {
+      accessSync(dbFile, fsConstants.W_OK);
+    } catch {
+      problem = new Error('database file is not writable');
+    }
+  }
+  if (!problem) return;
+
+  console.error(
+    [
+      '',
+      '  ==================================================================',
+      `   Cannot use the data folder: ${dir}`,
+      `   Reason: ${problem.message}`,
+      `   This process runs as uid ${uid}.`,
+      '',
+      '   The mounted folder belongs to a different user, so the database',
+      '   cannot be created. On the HOST, give the folder to this container:',
+      '',
+      `       sudo chown -R ${uid}:${uid} ./data`,
+      '',
+      '   (or point the volume at a writable path, or use a named volume',
+      '   instead of a bind mount)',
+      '  ==================================================================',
+      '',
+    ].join('\n'),
+  );
+  process.exit(1);
+}
+
+assertDataDirWritable(DATA_DIR);
 
 const db = openDb(join(DATA_DIR, 'bookshelf.db'));
 const { generated } = ensurePin(db);
