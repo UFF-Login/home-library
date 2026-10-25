@@ -447,7 +447,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`bookshelf listening on http://${HOST}:${PORT}  (data: ${DATA_DIR})`);
+  console.log(`home-library listening on http://${HOST}:${PORT}  (data: ${DATA_DIR})`);
 });
 
 export { server, db };
