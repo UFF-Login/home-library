@@ -26,7 +26,6 @@ services:
       - "${PORT}:8080"
     environment:
       BOOKSHELF_PIN: "${PIN}"
-      TZ: Australia/Sydney
     volumes:
       - ./data:/data
     healthcheck:

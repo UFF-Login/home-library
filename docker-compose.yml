@@ -18,7 +18,6 @@ services:
       # This PIN is the only thing between the open internet and your library.
       # Change it, and set it here rather than relying on the generated one.
       BOOKSHELF_PIN: "change-me-6-digits"
-      TZ: Australia/Sydney
 
     volumes:
       # ./data holds bookshelf.db plus the cached cover images. Back this folder

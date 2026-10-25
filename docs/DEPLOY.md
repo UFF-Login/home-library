@@ -25,7 +25,6 @@ services:
       - "8080:8080"
     environment:
       BOOKSHELF_PIN: "choose-a-pin"
-      TZ: Australia/Sydney
     volumes:
       - ./data:/data
     healthcheck:
