@@ -5,7 +5,6 @@
 # needs nothing but Docker - no Node, no compiler, no source checkout.
 services:
   bookshelf:
-    # Replace UFF-Login with your GitHub username once the first build has run.
     image: ghcr.io/UFF-Login/bookshelf:latest
     container_name: bookshelf
     restart: unless-stopped
