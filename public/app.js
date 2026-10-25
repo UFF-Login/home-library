@@ -765,6 +765,8 @@ $('btn-logout').addEventListener('click', async () => {
   showGate();
 });
 
+$('btn-refresh').addEventListener('click', () => refreshApp());
+
 $('btn-covers').addEventListener('click', async () => {
   const button = $('btn-covers');
   const status = $('covers-status');
@@ -793,6 +795,110 @@ $('btn-covers').addEventListener('click', async () => {
     status.textContent = 'Could not reach the cover sources just now — try again later.';
   } finally {
     button.disabled = false;
+  }
+});
+
+// ---------------------------------------------------------------- refresh
+
+const PTR_THRESHOLD = 70;
+let ptrStartY = null;
+let ptrDelta = 0;
+let refreshBusy = false;
+
+function ptrRender(delta, label) {
+  const node = $('ptr');
+  if (!node) return;
+  node.style.transform = `translate(-50%, ${Math.max(0, Math.min(delta, 96))}px)`;
+  node.style.opacity = delta > 6 ? '1' : '0';
+  const text = node.querySelector('.ptr-label');
+  if (text && label) text.textContent = label;
+}
+
+/**
+ * Refresh the app. If the server is serving a different build from the one this
+ * page loaded, drop every cache and the service worker and reload - that is the
+ * only reliable cure for "I updated but my phone still shows the old app".
+ */
+async function refreshApp() {
+  if (refreshBusy) return;
+  refreshBusy = true;
+  ptrRender(80, 'Checking for updates…');
+  try {
+    const me = await fetch('/api/me', { cache: 'no-store' }).then((r) => r.json());
+    const serverVersion = me?.version ?? null;
+    if (serverVersion && serverVersion !== state.version) {
+      ptrRender(80, 'New version — reloading…');
+      for (const key of await caches.keys()) await caches.delete(key);
+      const regs = (await navigator.serviceWorker?.getRegistrations?.()) ?? [];
+      for (const reg of regs) {
+        if (reg.waiting) reg.waiting.postMessage('skipWaiting');
+        await reg.unregister().catch(() => {});
+      }
+      location.reload();
+      return;
+    }
+    await Promise.all([loadShelf(), loadSeries(), loadStats()]);
+    toast('Up to date');
+  } catch {
+    toast('Could not reach the server');
+  } finally {
+    refreshBusy = false;
+    setTimeout(() => ptrRender(0, 'Pull to refresh'), 300);
+  }
+}
+
+// Drag down anywhere at the top of the page to refresh. `passive: false` on move
+// so the gesture does not also trigger the browser's own bounce.
+window.addEventListener(
+  'touchstart',
+  (event) => {
+    if (refreshBusy || window.scrollY > 0) {
+      ptrStartY = null;
+      return;
+    }
+    ptrStartY = event.touches[0].clientY;
+    ptrDelta = 0;
+  },
+  { passive: true },
+);
+
+window.addEventListener(
+  'touchmove',
+  (event) => {
+    if (ptrStartY === null) return;
+    const delta = event.touches[0].clientY - ptrStartY;
+    if (delta <= 0 || window.scrollY > 0) {
+      ptrDelta = 0;
+      ptrRender(0, 'Pull to refresh');
+      return;
+    }
+    ptrDelta = delta;
+    ptrRender(delta, delta > PTR_THRESHOLD ? 'Release to refresh' : 'Pull to refresh');
+    if (delta > 8) event.preventDefault();
+  },
+  { passive: false },
+);
+
+window.addEventListener('touchend', () => {
+  if (ptrStartY === null) return;
+  const trigger = ptrDelta > PTR_THRESHOLD;
+  ptrStartY = null;
+  ptrDelta = 0;
+  if (trigger) refreshApp();
+  else ptrRender(0, 'Pull to refresh');
+});
+
+document.addEventListener('visibilitychange', () => {
+  // Coming back to the app is a good moment to notice a new build.
+  if (!document.hidden && !refreshBusy) {
+    fetch('/api/me', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((me) => {
+        if (me?.version && state.version && me.version !== state.version) {
+          toast('New version available — pull down to refresh');
+        }
+      })
+      .catch(() => {});
   }
 });
 

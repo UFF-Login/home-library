@@ -271,8 +271,23 @@ async function serveStatic(req, res, pathname) {
   if (!existsSync(target)) return json(res, 404, { error: 'not found' });
 
   const info = await stat(target);
-  const type = MIME[extname(target)] ?? 'application/octet-stream';
   const ext = extname(target);
+
+  // HTML is templated so every asset URL carries the build id. A stale service
+  // worker can then never hand back yesterday's app.js under today's page - the
+  // cache key itself changes with the build.
+  if (ext === '.html') {
+    const template = await readFile(target, 'utf8');
+    const html = template.split('__VERSION__').join(encodeURIComponent(VERSION));
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'content-length': Buffer.byteLength(html),
+      'cache-control': 'no-cache',
+    });
+    return res.end(html);
+  }
+
+  const type = MIME[ext] ?? 'application/octet-stream';
   // App shell files must never be served stale, or an update would not reach a
   // phone that has the app installed. Only immutable assets get a long cache.
   const isShell = ['.html', '.js', '.css', '.webmanifest'].includes(ext) || rel === 'sw.js';

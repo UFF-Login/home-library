@@ -9,9 +9,13 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Home Library</title>
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="manifest" href="/manifest.webmanifest?v=__VERSION__" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
-    <link rel="stylesheet" href="/style.css" />
+    <!-- ?v=__VERSION__ makes each build a distinct cache key. Without it a stale
+         service worker can serve the previous app.js under the same URL, which
+         shows up as a new page running old code. The server substitutes the real
+         build id at request time. -->
+    <link rel="stylesheet" href="/style.css?v=__VERSION__" />
   </head>
   <body>
     <!-- Login gate: only visible until the session cookie is accepted. -->
@@ -117,6 +121,7 @@
         </div>
         <div class="panel">
           <h2>Session</h2>
+          <button id="btn-refresh" class="ghost">Check for updates</button>
           <button id="btn-logout" class="ghost">Lock the app</button>
         </div>
       </section>
@@ -137,8 +142,11 @@
       <div id="sheet-body"></div>
     </div>
 
+    <!-- Pull down to refresh: re-checks for a new build and reloads the data. -->
+    <div id="ptr" class="ptr" aria-hidden="true"><span class="ptr-label">Pull to refresh</span></div>
+
     <div id="toast" class="toast" hidden></div>
 
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/app.js?v=__VERSION__"></script>
   </body>
 </html>

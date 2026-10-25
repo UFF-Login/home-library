@@ -236,6 +236,18 @@ button:active { transform: scale(0.985); }
 .sheet-grip { width: 42px; height: 4px; background: var(--line); border-radius: 2px; margin: 4px auto 12px; }
 .sheet h2 { font-size: 18px; margin-bottom: 8px; }
 
+/* Pull-to-refresh indicator, revealed by dragging down at the top of the page. */
+.ptr {
+  position: fixed; top: 0; left: 50%; z-index: 70;
+  transform: translate(-50%, -70px); opacity: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px; border-radius: 0 0 14px 14px;
+  background: var(--card); border: 1px solid var(--line); border-top: 0;
+  font-size: 13px; color: var(--muted); pointer-events: none;
+  transition: opacity 0.15s ease;
+  padding-top: calc(env(safe-area-inset-top) + 10px);
+}
+
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%);
   bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 16px);

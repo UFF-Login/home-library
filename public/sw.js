@@ -18,7 +18,7 @@ const SHELL = [
   '/vendor/zxing.min.js',
 ];
 
-const VERSION = 'v2';
+const VERSION = 'v3';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -27,6 +27,12 @@ self.addEventListener('install', (event) => {
       .then((cache) => cache.addAll(SHELL))
       .then(() => self.skipWaiting()),
   );
+});
+
+// A waiting worker can be told to take over immediately (pull to refresh does
+// this), otherwise a phone could sit on the old build until every tab closes.
+self.addEventListener('message', (event) => {
+  if (event.data === 'skipWaiting') self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
