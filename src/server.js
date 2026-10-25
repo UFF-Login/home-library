@@ -33,16 +33,15 @@ const PUBLIC_DIR = join(HERE, '..', 'public');
  *             keep the same human version, so CI passes the commit SHA.
  */
 const VERSION = (() => {
-  const raw =
-    process.env.APP_VERSION ??
-    (() => {
-      try {
-        return JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')).version;
-      } catch {
-        return 'dev';
-      }
-    })();
-  return formatVersion(raw);
+  // A blank APP_VERSION must not win: the Dockerfile declares the ARG so the env
+  // var exists but is empty, and `??` would happily accept "" and print "dev".
+  const fromEnv = String(process.env.APP_VERSION ?? '').trim();
+  if (fromEnv) return formatVersion(fromEnv);
+  try {
+    return formatVersion(JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8')).version);
+  } catch {
+    return 'dev';
+  }
 })();
 
 /** "1.3.0" -> "v1.3"; "2.0" -> "v2.0"; anything unexpected passes through. */
