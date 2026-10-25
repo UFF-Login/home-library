@@ -771,7 +771,24 @@ async function loadStats() {
 }
 
 async function renderMore() {
-  await Promise.all([loadStats(), loadRecentScans()]);
+  await Promise.all([loadStats(), loadRecentScans(), loadSourceStatus()]);
+}
+
+/**
+ * Which metadata sources are actually live. Series comes from Wikidata and needs
+ * no key; Google Books is optional and only used for ratings/descriptions.
+ */
+async function loadSourceStatus() {
+  const node = $('sources-status');
+  if (!node) return;
+  try {
+    const settings = await api('/api/settings');
+    node.textContent = settings.googleBooks
+      ? 'Ratings: Open Library + Google Books. Series: Wikidata.'
+      : 'Ratings: Open Library only. Series: Wikidata. (Google Books key not set.)';
+  } catch {
+    node.textContent = '';
+  }
 }
 
 async function loadRecentScans() {

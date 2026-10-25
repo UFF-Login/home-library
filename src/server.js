@@ -14,7 +14,9 @@ import { fileURLToPath } from 'node:url';
 
 import { openDb, findBook, saveBook, listBooks, listSeries, seriesSummary, stats, recordScan, recentScans, deleteBook, exportAll, getLookupCache, setLookupCache } from './db.js';
 import { normaliseIsbn } from './isbn.js';
-import { missingVolumes, describeMissing, seriesKey } from './series.js';
+import { missingVolumes, describeMissing, seriesKey, parseSeries } from './series.js';
+import { seriesFromWikidata } from './wikidata.js';
+import { googleBooksByIsbn, googleBooksKey } from './googlebooks.js';
 import { authorKey } from './authors.js';
 import { lookupIsbn, fetchRating } from './lookup.js';
 import { ensurePin, createAuth, parseCookies } from './auth.js';
@@ -230,14 +232,49 @@ async function metaFor(isbn13) {
 
   const result = await lookupIsbn(isbn13).catch(() => ({ found: false, work: null }));
 
-  // Community rating lives on the work, so it needs one more call. Doing it here
-  // (and caching it) means the scan card can show stars before the book is added,
-  // rather than only after.
-  if (result.found && result.work?.workKey && result.work.rating == null) {
-    const rating = await fetchRating(result.work.workKey).catch(() => null);
-    if (rating) {
-      result.work.rating = rating.average;
-      result.work.ratingsCount = rating.count;
+  if (result.found && result.work) {
+    const work = result.work;
+
+    // Rating: Open Library first (free, no key), Google Books as the fallback when
+    // a key is configured and OL has nothing.
+    if (work.workKey && work.rating == null) {
+      const rating = await fetchRating(work.workKey).catch(() => null);
+      if (rating) {
+        work.rating = rating.average;
+        work.ratingsCount = rating.count;
+      }
+    }
+    if (work.rating == null) {
+      const gb = await googleBooksByIsbn(isbn13).catch(() => null);
+      if (gb) {
+        if (gb.rating != null) {
+          work.rating = gb.rating;
+          work.ratingsCount = gb.ratingsCount;
+        }
+        work.description ??= gb.description;
+        if (!work.pages && gb.pages) work.pages = gb.pages;
+        // Google's title text sometimes carries a series marker ours can parse.
+        if (!work.series) {
+          const parsed = parseSeries({ title: gb.title ?? work.title, subtitle: gb.subtitle ?? work.subtitle });
+          if (parsed.series) {
+            work.series = parsed.series;
+            work.seriesKey = seriesKey(parsed.series);
+            work.volume = parsed.volume ?? work.volume;
+          }
+        }
+      }
+    }
+
+    // Series: structured data lives in Wikidata (P179 + P1545), joined by the
+    // Open Library work id. Neither Open Library subjects nor Google Books model
+    // series and volume properly.
+    if (!work.series && work.workKey) {
+      const wiki = await seriesFromWikidata(work.workKey).catch(() => null);
+      if (wiki?.series) {
+        work.series = wiki.series;
+        work.seriesKey = seriesKey(wiki.series);
+        work.volume = work.volume ?? wiki.volume;
+      }
     }
   }
 
@@ -614,7 +651,10 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         dataDir: DATA_DIR,
         hasPinFromEnv: Boolean(process.env.BOOKSHELF_PIN),
-        version: process.env.APP_VERSION ?? 'dev',
+        version: VERSION,
+        build: BUILD,
+        // Tells the operator whether the optional Google Books key is wired up.
+        googleBooks: Boolean(googleBooksKey()),
       });
     }
 

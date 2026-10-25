@@ -32,6 +32,8 @@ services:
       # A PIN set in .env always wins over a stored one, so this is also the
       # recovery path if the PIN is forgotten: change it, `up -d` again.
       BOOKSHELF_PIN: "${BOOKSHELF_PIN:-}"
+      # Optional (see .env.example): ratings/descriptions from Google Books.
+      GOOGLE_BOOKS_KEY: "${GOOGLE_BOOKS_KEY:-}"
 
     volumes:
       # The database and cached covers. THIS is the library - back it up.
