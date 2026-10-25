@@ -1,0 +1,136 @@
+# Deploying on the home server
+
+Everything here happens on the server. Nothing is built there — the image comes
+from GitHub.
+
+---
+
+## 1. Pick a home for the data
+
+The `data` folder sits next to the compose file and holds the whole catalogue:
+
+```bash
+mkdir -p ~/docker/bookshelf && cd ~/docker/bookshelf
+```
+
+## 2. Write `docker-compose.yml`
+
+```yaml
+services:
+  bookshelf:
+    image: ghcr.io/UFF-Login/bookshelf:latest
+    container_name: bookshelf
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      BOOKSHELF_PIN: "choose-a-pin"
+      TZ: Australia/Sydney
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+```
+
+## 3. Pull credentials (only if the GHCR package stays private)
+
+Create a GitHub token with **read:packages** (Settings → Developer settings →
+Personal access tokens → Fine-grained, or the classic token with `read:packages`),
+then once:
+
+```bash
+echo <TOKEN> | docker login ghcr.io -u UFF-Login --password-stdin
+```
+
+If the package is made public, skip this — `docker compose pull` just works.
+
+## 4. Start
+
+```bash
+docker compose up -d
+docker compose ps          # wait for (healthy)
+docker compose logs --tail=20
+```
+
+If `BOOKSHELF_PIN` is unset, the log prints a generated PIN once.
+
+---
+
+## 5. Reverse proxy
+
+### Nginx Proxy Manager
+
+Add a **Proxy Host**:
+
+| Field | Value |
+| --- | --- |
+| Domain Names | `books.yourdomain.com` |
+| Scheme | `http` |
+| Forward Hostname / IP | the server's LAN IP (or the container name if NPM is in the same compose network) |
+| Forward Port | `8080` |
+| Block Common Exploits | on |
+| Websockets Support | not required, harmless |
+
+Then in the **SSL** tab: *Request a new SSL certificate*, **Force SSL** on,
+HTTP/2 on, and agree to the Let's Encrypt terms. This is what makes the phone
+camera work — browsers refuse camera access on plain `http://`.
+
+### Traefik
+
+```yaml
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.books.rule=Host(`books.yourdomain.com`)"
+      - "traefik.http.routers.books.tls.certresolver=letsencrypt"
+      - "traefik.http.services.books.loadbalancer.server.port=8080"
+```
+
+Traefik passes `X-Forwarded-Proto`, which the app uses to mark the session
+cookie `Secure`. Remove the `ports:` block if Traefik shares the network.
+
+---
+
+## 6. Check it from the phone
+
+1. Open `https://books.yourdomain.com` — the padlock must be there.
+2. PIN in. Scan tab should ask for camera permission.
+3. If the camera area stays black: it is almost always **not HTTPS**, or the
+   browser was opened over a cached `http://` URL. Check the padlock first.
+
+---
+
+## 7. Updating
+
+```bash
+cd ~/docker/bookshelf
+docker compose pull && docker compose up -d
+```
+
+Data is untouched — it lives in `./data`, outside the container. The service
+worker is network-first, so a refresh picks up the new version immediately.
+
+## 8. Backup
+
+```bash
+docker run --rm -v "$PWD/data:/data" -v "$PWD:/out" alpine tar czf /out/bookshelf-$(date +%F).tgz -C /data .
+```
+
+Also: the app's **More → Download catalogue** button gives the same data as JSON.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Camera never starts, black video | page served over `http://` | use `https://`, check the padlock |
+| `502 Bad Gateway` in NPM | wrong forward port/host | port `8080`, host = reachable IP |
+| Container `unhealthy` | healthcheck cannot reach the app | `docker compose logs`; check `PORT` is still 8080 inside |
+| `denied` on pull | private package, no login | step 3 |
+| Forgot the PIN | PIN hash is in the DB | set `BOOKSHELF_PIN` in compose, `docker compose up -d` |
+| Book found twice | different ISBNs for the same book (different editions) | that is real; each ISBN is a separate edition. Delete the duplicate. |
