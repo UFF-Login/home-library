@@ -32,8 +32,13 @@ export function ensurePin(db) {
   const secret = getMeta(db, 'session_secret') ?? crypto.randomBytes(32).toString('hex');
   setMeta(db, 'session_secret', secret);
 
+  // An explicit env PIN always wins, every start. Writing it only when no hash
+  // existed made the documented recovery path ("forgot the PIN, set it in
+  // compose, restart") silently do nothing once a PIN had been generated - the
+  // operator would change the compose file and still be locked out.
   if (process.env.BOOKSHELF_PIN) {
-    if (!getMeta(db, 'pin_hash')) setMeta(db, 'pin_hash', hash(process.env.BOOKSHELF_PIN));
+    const hashOfEnv = hash(process.env.BOOKSHELF_PIN);
+    if (getMeta(db, 'pin_hash') !== hashOfEnv) setMeta(db, 'pin_hash', hashOfEnv);
     return { pin: null, generated: null };
   }
 

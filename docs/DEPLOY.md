@@ -13,28 +13,28 @@ The `data` folder sits next to the compose file and holds the whole catalogue:
 mkdir -p ~/docker/home-library && cd ~/docker/home-library
 ```
 
-## 2. Write `docker-compose.yml`
+## 2. Get `docker-compose.yml`
 
-```yaml
-services:
-  home-library:
-    image: ghcr.io/UFF-Login/home-library:latest
-    container_name: home-library
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    environment:
-      BOOKSHELF_PIN: "choose-a-pin"
-    volumes:
-      - ./data:/data
-    healthcheck:
-      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:8080/healthz"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    security_opt:
-      - no-new-privileges:true
+Download the shipped file rather than retyping it — it is the one CI builds
+against:
+
+```bash
+curl -fsSL -o docker-compose.yml \
+  https://raw.githubusercontent.com/UFF-Login/home-library/main/docker-compose.yml
 ```
+
+Then open it and set your PIN, either by editing `BOOKSHELF_PIN` or by exporting
+it before `up`:
+
+```bash
+export BOOKSHELF_PIN=482913     # or edit the file
+```
+
+Leave it empty and the app generates a PIN and prints it once:
+`docker compose logs | grep -i pin`.
+
+The service, container and data folder are all named `home-library`, the port is
+`8080`, and the catalogue lives in `./data`.
 
 ## 3. Pull credentials: none needed
 

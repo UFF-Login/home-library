@@ -1,27 +1,39 @@
-# Deploy on the server with:  docker compose up -d
-# Update with:                docker compose pull && docker compose up -d
+# Home Library - self-hosted book catalogue.
 #
-# The image is built by GitHub Actions and published to GHCR, so the server
-# needs nothing but Docker - no Node, no compiler, no source checkout.
+# Deploy on the server:
+#   1. mkdir -p home-library && cd home-library
+#   2. save this file there as docker-compose.yml
+#   3. docker compose up -d
+#
+# Update later with:   docker compose pull && docker compose up -d
+#
+# The image is public on GHCR, so there is no docker login and no GitHub account
+# needed on the server. Nothing is built here: no Node, no compiler, no source.
+name: home-library
+
 services:
   home-library:
-    image: ghcr.io/UFF-Login/home-library:latest
+    image: ghcr.io/uff-login/home-library:latest
     container_name: home-library
     restart: unless-stopped
 
     ports:
-      # Bind to all interfaces so your reverse proxy can reach it. If the proxy
-      # runs on the same host you can lock it down to 127.0.0.1:8080:8080.
+      # Your reverse proxy talks to this. If the proxy runs on the same host you
+      # can bind it to the loopback only: "127.0.0.1:8080:8080".
       - "8080:8080"
 
     environment:
-      # This PIN is the only thing between the open internet and your library.
-      # Change it, and set it here rather than relying on the generated one.
-      BOOKSHELF_PIN: "change-me-6-digits"
+      # Your login PIN - the only thing between the internet and your library.
+      # Either set a value here (6+ digits), or export BOOKSHELF_PIN before
+      # `docker compose up`, or leave it empty and the app generates one and
+      # prints it once:   docker compose logs | grep -i pin
+      #
+      # A PIN set here always wins over a previously stored one, so this is also
+      # the recovery path if the PIN is forgotten: change it, `up -d` again.
+      BOOKSHELF_PIN: "${BOOKSHELF_PIN:-}"
 
     volumes:
-      # ./data holds bookshelf.db plus the cached cover images. Back this folder
-      # up, or use the Download catalogue button, which is the same data as JSON.
+      # The database and cached covers. THIS is the library - back it up.
       - ./data:/data
 
     healthcheck:
@@ -29,8 +41,8 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 10s
 
-    # Defence in depth: caps the damage if the process is ever exploited.
-    read_only: false
+    # Defence in depth: the container cannot gain privileges it was not given.
     security_opt:
       - no-new-privileges:true
