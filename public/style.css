@@ -104,10 +104,14 @@ button:active { transform: scale(0.985); }
 .tab.active { color: var(--accent); }
 
 /* ---------- scanner ---------- */
+/* Landscape-ish and shorter than before: the scan RESULT is the thing you need
+   to see, so the viewfinder must not eat the screen. 4:3 at 38vh leaves room
+   for the verdict card above the tab bar on a 390x844 phone without scrolling. */
 .scanner {
-  position: relative; aspect-ratio: 3 / 4; max-height: 58vh;
+  position: relative; aspect-ratio: 4 / 3; max-height: 38vh;
   border-radius: var(--radius); overflow: hidden;
   background: #000; border: 1px solid var(--line);
+  margin-inline: auto;
 }
 .scanner video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .reticle { position: absolute; inset: 14% 8%; }

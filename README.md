@@ -151,8 +151,17 @@ phone browser ──HTTPS──> reverse proxy ──> container :8080
   title/subtitle, with Open Library's `series:` subject as fallback. It is right
   for most numbered genre series and wrong sometimes — hence the manual
   series/volume field, which then drives the gap maths.
-- **Covers** come from Open Library. When it has no cover for an ISBN (common for
-  old paperbacks) you get a placeholder, not an error.
+- **Covers** come from Open Library only, in three steps: the work's own cover,
+  then the exact ISBN's art, then any other edition of the same work. The ISBN is
+  verified against the record's own ISBN list first, because the search endpoint
+  is fuzzy. Books with no art anywhere show a placeholder — deliberately, because
+  Google Books' and Amazon's image endpoints answer every ISBN with a "no image"
+  graphic that measures within three pixels of a real cover (128x183 vs 128x186),
+  so using them means confidently wrong pictures. Amazon is available behind
+  `COVER_AMAZON=1` if you accept that trade.
+- A cover that could not be fetched because the network failed is **not**
+  remembered as "no cover" — only a definitive answer is cached, and those caches
+  expire monthly. **More → Reload missing covers** retries everything on demand.
 
 ---
 

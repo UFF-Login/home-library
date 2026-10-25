@@ -16,6 +16,7 @@
 import { fetchJson } from './util.js';
 import { parseSeries, seriesFromSubjects, seriesKey } from './series.js';
 import { authorKey } from './authors.js';
+import { verifiedSearchDoc } from './openlibrary.js';
 
 const OL_BOOKS = 'https://openlibrary.org/api/books';
 const OL_SEARCH = 'https://openlibrary.org/search.json';
@@ -56,11 +57,13 @@ async function fetchEdition(isbn13, timeoutMs) {
   return res.data[`ISBN:${isbn13}`] ?? null;
 }
 
+/**
+ * Search is a *search*: `q=isbn:<unknown>` returns fuzzy matches, so the first
+ * document is not necessarily this book. Use the verified lookup, otherwise a
+ * scan of an obscure ISBN could adopt another book's title and author.
+ */
 async function fetchSearch(isbn13, timeoutMs) {
-  const url = `${OL_SEARCH}?q=isbn:${isbn13}&fields=key,title,subtitle,author_name,first_publish_year,cover_i,publisher,number_of_pages_median&limit=1`;
-  const res = await fetchJson(url, { timeoutMs });
-  if (!res.ok || !res.data) return null;
-  return res.data.docs?.[0] ?? null;
+  return verifiedSearchDoc(isbn13, { timeoutMs });
 }
 
 /** Community rating lives on the work, not the edition, and needs its own call. */

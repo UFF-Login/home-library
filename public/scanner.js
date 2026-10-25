@@ -196,20 +196,68 @@ export function stopScanner() {
   zxingReader = null;
 }
 
-/** Torch only exists on some Android devices; hide the button when it fails. */
-export async function setTorch(on) {
+function torchTrack() {
   const track = stream?.getVideoTracks?.()[0];
-  if (!track) return false;
+  if (!track || track.readyState === 'ended') return null;
+  return track;
+}
+
+/** Does this camera advertise a torch? Independent of whether it is on. */
+export async function hasTorch() {
+  const track = torchTrack();
+  if (!track?.getCapabilities) return false;
   try {
-    await track.applyConstraints({ advanced: [{ torch: Boolean(on) }] });
-    return Boolean(on);
+    return Boolean(track.getCapabilities().torch);
   } catch {
     return false;
   }
 }
 
-export async function hasTorch() {
-  const track = stream?.getVideoTracks?.()[0];
-  if (!track?.getCapabilities) return false;
-  return Boolean(track.getCapabilities().torch);
+/**
+ * The ACTUAL torch state, read from the camera rather than remembered.
+ * The button used to keep its own boolean, so after the OS or the browser turned
+ * the light off the next tap sent "off" to a light that was already off and the
+ * app reported a failure. Read the hardware instead.
+ */
+export async function getTorchState() {
+  const track = torchTrack();
+  if (!track?.getSettings) return false;
+  try {
+    return Boolean(track.getSettings().torch);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Try to set the torch. Returns { ok, supported, needsRestart }.
+ * Two constraint shapes are tried because devices disagree: Chrome wants
+ * `advanced: [{torch}]`, some builds accept the flat form.
+ */
+export async function setTorch(on) {
+  const track = torchTrack();
+  if (!track) return { ok: false, supported: true, needsRestart: true };
+
+  let supported = false;
+  try {
+    supported = Boolean(track.getCapabilities?.().torch);
+  } catch {
+    supported = false;
+  }
+  if (!supported) return { ok: false, supported: false };
+
+  const desired = Boolean(on);
+  for (const constraints of [{ advanced: [{ torch: desired }] }, { torch: desired }]) {
+    try {
+      await track.applyConstraints(constraints);
+      const now = track.getSettings?.().torch;
+      // Verify: some implementations resolve without changing anything.
+      if (now === undefined || Boolean(now) === desired) {
+        return { ok: true, supported: true };
+      }
+    } catch {
+      // try the next shape
+    }
+  }
+  return { ok: false, supported: true };
 }

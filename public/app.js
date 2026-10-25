@@ -4,7 +4,7 @@
 // Fast path that matters: a local ISBN index (isbn -> {title, state}) is kept in
 // localStorage, so a scan of a book you own is answered before any network call
 // returns - and it still answers with no signal at all.
-import { startScanner, stopScanner, setTorch, hasTorch } from './scanner.js';
+import { startScanner, stopScanner, setTorch, hasTorch, getTorchState } from './scanner.js';
 
 const INDEX_KEY = 'bookshelf.isbnIndex.v1';
 const state = {
@@ -166,7 +166,17 @@ async function startCamera() {
     $('btn-camera').textContent = 'Try camera again';
     return;
   }
-  if (await hasTorch()) $('btn-torch').hidden = false;
+  // Re-evaluate the torch for THIS stream: a previous stream may have had one
+  // and this one may not (front vs rear camera), and a stale "No light" label
+  // must not survive a restart.
+  const torchButton = $('btn-torch');
+  const torchAvailable = await hasTorch();
+  torchButton.hidden = !torchAvailable;
+  if (torchAvailable) {
+    torchButton.disabled = false;
+    torchButton.title = '';
+    torchButton.textContent = (await getTorchState()) ? 'Light off' : 'Light on';
+  }
 }
 
 function stopCamera() {
@@ -182,13 +192,40 @@ function stopCamera() {
 $('btn-camera').addEventListener('click', () => (state.scanning ? stopCamera() : startCamera()));
 
 $('btn-torch').addEventListener('click', async () => {
-  state.torch = !state.torch;
-  const ok = await setTorch(state.torch);
-  if (!ok) {
-    state.torch = false;
-    $('btn-torch').hidden = true;
-    toast('No light on this camera');
+  // Ask the camera what it is doing rather than trusting a remembered boolean:
+  // the OS can switch the light off on its own, and then the button's next tap
+  // would send "off" to an already-off light and report a false failure.
+  const isOn = await getTorchState();
+  const want = !isOn;
+
+  let result = await setTorch(want);
+
+  // A stream that has been dropped (backgrounded tab, camera handed to another
+  // app) cannot be controlled until it is re-opened. Re-open and try once more.
+  if (!result.ok && result.needsRestart) {
+    stopCamera();
+    await startCamera();
+    result = await setTorch(want);
   }
+
+  if (result.ok) {
+    state.torch = want;
+    $('btn-torch').textContent = want ? 'Light off' : 'Light on';
+    toast(want ? 'Light on' : 'Light off');
+    return;
+  }
+
+  if (!result.supported) {
+    // Disable rather than hide: hiding it is what made it seem to vanish
+    // permanently after one bad tap.
+    $('btn-torch').disabled = true;
+    $('btn-torch').textContent = 'No light';
+    $('btn-torch').title = 'This camera has no torch';
+    return;
+  }
+
+  // Supported but refused this time - keep the button live so it can be retried.
+  toast('Light did not change — tap again');
 });
 
 $('btn-manual').addEventListener('click', () => {
@@ -233,7 +270,17 @@ function saveIndex(books) {
 // ---------------------------------------------------------------- scan
 
 function setResult(html) {
-  $('scan-result').innerHTML = html;
+  const node = $('scan-result');
+  node.innerHTML = html;
+  // Bring the verdict into view. The viewfinder is deliberately small, but on a
+  // short phone the card can still start below the fold - and a scan you cannot
+  // see the result of is a wasted scan.
+  const card = node.querySelector('.card');
+  if (card) {
+    const rect = card.getBoundingClientRect();
+    const hiddenBelow = rect.bottom > window.innerHeight - 70;
+    if (rect.top < 0 || hiddenBelow) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
 }
 
 let enrichmentToken = 0;
@@ -716,6 +763,37 @@ async function loadRecentScans() {
 $('btn-logout').addEventListener('click', async () => {
   await fetch('/api/logout', { method: 'POST' });
   showGate();
+});
+
+$('btn-covers').addEventListener('click', async () => {
+  const button = $('btn-covers');
+  const status = $('covers-status');
+  button.disabled = true;
+  let checked = 0;
+  let found = 0;
+
+  try {
+    // First call clears the stale "no cover" markers; the rest work through the
+    // catalogue in batches so no single request can hang for minutes.
+    for (let round = 0; round < 40; round += 1) {
+      const result = await api('/api/covers/refresh', {
+        method: 'POST',
+        body: { reset: round === 0 },
+      });
+      checked += result.checked;
+      found += result.found;
+      status.textContent = checked
+        ? `Checked ${checked} · found ${found}${result.remaining ? ` · ${result.remaining} to go` : ''}`
+        : 'No books are missing a cover.';
+      if (result.checked === 0 || result.remaining === 0) break;
+    }
+    status.textContent = found ? `Added ${found} cover${found === 1 ? '' : 's'}.` : status.textContent;
+    await loadShelf();
+  } catch {
+    status.textContent = 'Could not reach the cover sources just now — try again later.';
+  } finally {
+    button.disabled = false;
+  }
 });
 
 // ---------------------------------------------------------------- boot

@@ -102,6 +102,12 @@
           <a class="button primary" href="/api/export" download>Download catalogue</a>
         </div>
         <div class="panel">
+          <h2>Covers</h2>
+          <p class="hint">Books with no artwork yet. Retries Open Library: the exact ISBN first, then the same book's other editions. A book with no art anywhere shows a plain placeholder rather than a wrong picture. Misses are re-checked monthly.</p>
+          <button id="btn-covers" class="ghost">Reload missing covers</button>
+          <div id="covers-status" class="hint" style="margin:0"></div>
+        </div>
+        <div class="panel">
           <h2>Recent scans</h2>
           <div id="recent-scans" class="recent"></div>
         </div>

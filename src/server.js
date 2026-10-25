@@ -18,7 +18,7 @@ import { missingVolumes, describeMissing, seriesKey } from './series.js';
 import { authorKey } from './authors.js';
 import { lookupIsbn, fetchRating } from './lookup.js';
 import { ensurePin, createAuth, parseCookies } from './auth.js';
-import { ensureCover, coverFile } from './covers.js';
+import { ensureCover, coverFile, hasCover, coverMissPending, clearCoverMiss } from './covers.js';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(HERE, '..', 'public');
@@ -284,7 +284,10 @@ async function serveCover(req, res, isbn13) {
     .get(isbn13);
   const file = await ensureCover(DATA_DIR, { isbn13, coverId: row?.cover_id });
   if (!file) {
-    res.writeHead(404, { 'cache-control': 'public, max-age=3600' });
+    // Short cache: a cover can appear later (OL adds them, or the fallback
+    // sources were briefly unreachable), and a phone should pick it up quickly
+    // rather than an hour later.
+    res.writeHead(404, { 'cache-control': 'public, max-age=60' });
     return res.end();
   }
   const info = await stat(coverFile(DATA_DIR, isbn13));
@@ -476,6 +479,59 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (pathname === '/api/stats' && method === 'GET') return json(res, 200, stats(db));
+
+    /**
+     * Re-fetch covers that are missing. Capped per call so the request cannot
+     * hang for minutes on a large catalogue; the UI loops until remaining is 0.
+     */
+    if (pathname === '/api/covers/refresh' && method === 'POST') {
+      const CAP = 25;
+      const body = await readBody(req).catch(() => ({}));
+      const rows = db
+        .prepare(
+          `SELECT b.isbn13, w.cover_id FROM books b JOIN works w ON w.id = b.work_id
+            ORDER BY b.added_at DESC`,
+        )
+        .all();
+
+      // A batch run must not retry the same unsolvable books on every call, so
+      // the first call clears the existing "no cover" markers and later calls
+      // skip anything already tried in this run.
+      if (body.reset) {
+        for (const row of rows) {
+          if (!hasCover(DATA_DIR, row.isbn13)) clearCoverMiss(DATA_DIR, row.isbn13);
+        }
+      }
+
+      const missing = rows.filter(
+        (r) => !hasCover(DATA_DIR, r.isbn13) && !coverMissPending(DATA_DIR, r.isbn13),
+      );
+      const batch = missing.slice(0, CAP);
+
+      // Three at a time: polite to Open Library, and still ~1s per cover.
+      let found = 0;
+      let cursor = 0;
+      const workers = Array.from({ length: 3 }, async () => {
+        while (cursor < batch.length) {
+          const row = batch[cursor];
+          cursor += 1;
+          const file = await ensureCover(
+            DATA_DIR,
+            { isbn13: row.isbn13, coverId: row.cover_id },
+            { force: true, timeoutMs: 6000 },
+          ).catch(() => null);
+          if (file) found += 1;
+        }
+      });
+      await Promise.all(workers);
+
+      return json(res, 200, {
+        checked: batch.length,
+        found,
+        remaining: Math.max(0, missing.length - batch.length),
+        total: rows.length,
+      });
+    }
     if (pathname === '/api/scans' && method === 'GET') return json(res, 200, { scans: recentScans(db) });
     if (pathname === '/api/export' && method === 'GET') {
       res.setHeader('content-disposition', `attachment; filename="bookshelf-${Date.now()}.json"`);
