@@ -111,6 +111,16 @@
       <section class="view" id="view-more">
         <div class="stat-grid" id="stat-grid"></div>
         <div class="panel">
+          <h2>Owners</h2>
+          <p class="hint">People a book can belong to. Add each one once, then pick from the list when a book is added — the default is applied automatically, so scanning never requires a second screen.</p>
+          <div id="owner-list" class="owner-list"></div>
+          <div class="owner-add">
+            <input id="owner-name" placeholder="Add a name" autocomplete="off" />
+            <button id="btn-owner-add" class="ghost">Add</button>
+          </div>
+          <div id="owner-status" class="hint" style="margin:0"></div>
+        </div>
+        <div class="panel">
           <h2>Backup</h2>
           <p class="hint">A JSON file of the whole catalogue. Download it before any update; restore is a scan-free way back if a disk dies.</p>
           <a class="button primary" href="/api/export" download>Download catalogue</a>

@@ -22,6 +22,10 @@ const state = {
   scanning: false,
   torch: false,
   lastScan: null,
+  // Loaded once at boot: the book sheet needs these before the More tab is ever
+  // opened, and an undefined list was crashing the sheet open.
+  owners: [],
+  defaultOwner: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -459,7 +463,8 @@ function seriesNote(series, volume) {
 function resultCard(data) {
   const verdict = data.verdict;
   const book = data.book ?? data.preview ?? null;
-  const title = book?.title ?? (data.verdict === 'invalid' ? 'Not an ISBN barcode' : 'Unknown book');
+  const title =
+    (book?.title || (data.verdict === 'invalid' ? 'Not an ISBN barcode' : 'Unknown book'));
   const authors = Array.isArray(book?.authors) ? book.authors : book?.author ? [book.author] : [];
   const volumeLabel = book?.series && book?.volume ? `${book.series} #${book.volume}` : book?.series ?? '';
 
@@ -477,25 +482,22 @@ function resultCard(data) {
     awaitingMeta ? 'looking up details…' : `${data.elapsedMs ?? 0} ms`,
   ].filter(Boolean);
 
+  /**
+   * Exactly three choices, always in the same place: this is mine, put it on the
+   * wishlist, or ignore the scan. Everything else (metadata, covers, ratings,
+   * ownership) happens without asking.
+   */
+  const isOwned = verdict === 'owned';
+  const isWished = verdict === 'wishlist';
   let actions = '';
-  if (verdict === 'owned' || verdict === 'wishlist') {
-    actions = `<div class="btn-row">
-        <button class="primary" data-act="detail" data-isbn="${esc(data.isbn13)}">Open</button>
-        <button class="ghost" data-act="loan" data-isbn="${esc(data.isbn13)}">Lend</button>
+  if (verdict === 'invalid') {
+    actions = '<p class="book-sub">That code is not a book ISBN. Point at the barcode on the back cover.</p>';
+  } else {
+    actions = `<div class="btn-row actions">
+        <button class="${isOwned ? 'primary active' : 'primary'}" data-act="buy" data-isbn="${esc(data.isbn13)}">${isOwned ? '✓ Owned' : 'I own it'}</button>
+        <button class="${isWished ? 'active' : ''}" data-act="wish" data-isbn="${esc(data.isbn13)}">${isWished ? '✓ Wishlist' : 'Wishlist'}</button>
+        <button class="ghost" data-act="skip">Ignore</button>
       </div>`;
-  } else if (verdict === 'missing' && noRecord) {
-    actions = `<div class="btn-row">
-        <button class="primary" data-act="manual-add" data-isbn="${esc(data.isbn13)}">Add manually</button>
-        <button class="ghost" data-act="skip">Skip</button>
-      </div>`;
-  } else if (verdict === 'missing') {
-    actions = `<div class="btn-row">
-        <button class="primary" data-act="buy" data-isbn="${esc(data.isbn13)}">I bought it</button>
-        <button data-act="wish" data-isbn="${esc(data.isbn13)}">Wishlist</button>
-        <button class="ghost" data-act="skip">Skip</button>
-      </div>`;
-  } else if (verdict === 'invalid') {
-    actions = `<p class="book-sub">That code is not a book ISBN. Point at the barcode on the back cover.</p>`;
   }
 
   return `<div class="card v-${esc(verdict)}">
@@ -508,11 +510,11 @@ function resultCard(data) {
         <div class="book-extra">${esc(data.isbn13 ?? '')}</div>
       </div>
     </div>
+    ${actions}
     ${ratingPills(book)}
     ${sourcesLine(data)}
     ${seriesNote(data.series, book?.volume)}
-    ${noRecord ? '<p class="book-sub">Open Library has nothing for this ISBN. Add it by hand — title and author are all that is needed.</p>' : ''}
-    ${actions}
+    ${noRecord ? '<p class="book-sub">No provider knows this ISBN yet. You can still save it now — the details are filled in automatically if they turn up later.</p>' : ''}
   </div>`;
 }
 
@@ -550,7 +552,16 @@ $('scan-result').addEventListener('click', async (event) => {
       toast(`Could not add: ${error?.message ?? 'unknown error'}`);
       return;
     }
-    toast(targetState === 'owned' ? 'Added to your library' : 'Added to wishlist');
+    const alreadyHere = state.lastScan?.verdict === (targetState === 'owned' ? 'owned' : 'wishlist');
+    toast(
+      alreadyHere
+        ? targetState === 'owned'
+          ? 'Already in your library'
+          : 'Already on your wishlist'
+        : targetState === 'owned'
+          ? 'Added to your library'
+          : 'Added to wishlist',
+    );
     await Promise.all([loadShelf(), loadStats(), loadSeries()]);
     return handleScan(isbn);
   }
@@ -629,6 +640,13 @@ function openDetail(isbn) {
     </div>
 
     ${book.description ? `<p class="book-description">${esc(book.description)}</p>` : ''}
+    ${
+      // Placeholder records (saved before any provider identified them) would
+      // otherwise stay nameless forever if no source ever answers.
+      !book.title
+        ? `<p class="hint">This book was saved without a title. It fills in automatically when a source recognises the ISBN.<br /><button class="link" data-act="manual-add" data-isbn="${esc(book.isbn13)}">Name it by hand instead</button></p>`
+        : ''
+    }
 
     <div class="field">
       <label>Status</label>
@@ -665,7 +683,13 @@ function openDetail(isbn) {
       </div>
     </div>
 
-    <div class="field"><label for="d-owner">Who owns it</label><input id="d-owner" value="${esc(book.owner ?? '')}" placeholder="Me" /></div>
+    <div class="field">
+      <label for="d-owner">Who owns it</label>
+      <select id="d-owner">
+        <option value="">Nobody yet</option>
+        ${ownerOptions(book.owner)}
+      </select>
+    </div>
     <div class="field"><label for="d-loan">Lent to</label><input id="d-loan" value="${esc(book.loanedTo ?? '')}" placeholder="Empty = on the shelf" /></div>
 
     <div class="field">
@@ -757,6 +781,17 @@ async function loadShelf() {
   renderShelf();
   $('owned-count').textContent = `${data.count} ${data.count === 1 ? 'book' : 'books'}`;
 }
+
+/**
+ * Tapping a book on the shelf opens it.
+ *
+ * There was no handler here at all: the only way into a book's details was
+ * through a scan result, so the shelf looked inert.
+ */
+$('shelf-grid').addEventListener('click', (event) => {
+  const tile = event.target.closest('[data-isbn]');
+  if (tile) openDetail(tile.dataset.isbn);
+});
 
 function renderShelf() {
   const books = state.filter === 'loaned' ? state.books.filter((b) => b.loanedTo) : state.books;
@@ -850,8 +885,71 @@ async function loadStats() {
     .join('');
 }
 
+/**
+ * Options for the owner drop-down. A name that is no longer in the list (renamed
+ * or removed since) is kept as its own option, so opening a book can never
+ * silently change who owns it.
+ */
+function ownerOptions(current) {
+  const owners = state.owners ?? [];
+  const names = owners.map((owner) => owner.name);
+  const extra = current && !names.includes(current) ? [current] : [];
+  return [...owners.map((owner) => owner.name), ...extra]
+    .map(
+      (name) =>
+        `<option value="${esc(name)}" ${name === current ? 'selected' : ''}>${esc(name)}</option>`,
+    )
+    .join('');
+}
+
+async function loadOwners() {
+  try {
+    const data = await api('/api/owners');
+    state.owners = data.owners ?? [];
+    state.defaultOwner = data.defaultOwner ?? null;
+  } catch {
+    state.owners = [];
+    state.defaultOwner = null;
+  }
+  renderOwners();
+}
+
+function renderOwners() {
+  const node = $('owner-list');
+  if (!node) return;
+  if (!state.owners.length) {
+    node.innerHTML = '<p class="hint">No owners yet — add the first one below.</p>';
+    return;
+  }
+  node.innerHTML = state.owners
+    .map(
+      (owner) => `<div class="owner-row">
+        <span class="owner-name">${esc(owner.name)}${owner.isDefault ? ' <small>default</small>' : ''}</span>
+        ${owner.isDefault ? '' : `<button class="link" data-owner-default="${owner.id}">Make default</button>`}
+        <button class="link danger" data-owner-delete="${owner.id}" data-owner-name="${esc(owner.name)}">Remove</button>
+      </div>`,
+    )
+    .join('');
+}
+
+/** Owners are entered once; picking one for a book is a drop-down, never typing. */
+async function addOwnerFromInput() {
+  const input = $('owner-name');
+  const name = input.value.trim();
+  if (!name) return;
+  try {
+    await api('/api/owners', { method: 'POST', body: { name } });
+    input.value = '';
+    $('owner-status').textContent = '';
+    await loadOwners();
+  } catch (error) {
+    $('owner-status').textContent =
+      error?.message === 'owner_exists' ? 'That name is already in the list.' : 'Could not add that name.';
+  }
+}
+
 async function renderMore() {
-  await Promise.all([loadStats(), loadRecentScans(), loadSourceStatus()]);
+  await Promise.all([loadStats(), loadRecentScans(), loadSourceStatus(), loadOwners()]);
 }
 
 /**
@@ -1066,7 +1164,7 @@ async function boot() {
   loadIndex();
   setTab('scan');
   try {
-    await Promise.all([loadStats(), loadShelf(), loadSeries()]);
+    await Promise.all([loadStats(), loadShelf(), loadSeries(), loadOwners()]);
   } catch (error) {
     if (!(error instanceof AuthError)) toast('Could not load the catalogue');
   }
@@ -1116,5 +1214,32 @@ $('btn-rebuild').addEventListener('click', async () => {
     $('covers-status').textContent = 'Could not rebuild — try again.';
   } finally {
     button.disabled = false;
+  }
+});
+
+
+// Owners: add, choose a default, remove. Removing never touches books that were
+// attributed to that person - their name stays on the record.
+$('btn-owner-add').addEventListener('click', addOwnerFromInput);
+$('owner-name').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') addOwnerFromInput();
+});
+
+$('owner-list').addEventListener('click', async (event) => {
+  const makeDefault = event.target.closest('[data-owner-default]');
+  const remove = event.target.closest('[data-owner-delete]');
+  try {
+    if (makeDefault) {
+      await api(`/api/owners/${makeDefault.dataset.ownerDefault}`, { method: 'PATCH', body: { isDefault: true } });
+      await loadOwners();
+    }
+    if (remove) {
+      const name = remove.dataset.ownerName;
+      if (!confirm(`Remove ${name} from the list? Books already marked as theirs keep that name.`)) return;
+      await api(`/api/owners/${remove.dataset.ownerDelete}`, { method: 'DELETE' });
+      await loadOwners();
+    }
+  } catch {
+    $('owner-status').textContent = 'Could not update the owner list.';
   }
 });

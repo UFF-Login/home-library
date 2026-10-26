@@ -12,7 +12,29 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, extname, resolve, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { openDb, findBook, saveBook, listBooks, listSeries, seriesSummary, stats, recordScan, recentScans, deleteBook, exportAll, getLookupCache, setLookupCache, clearLookupCache } from './db.js';
+import {
+  openDb,
+  findBook,
+  saveBook,
+  listBooks,
+  listSeries,
+  seriesSummary,
+  stats,
+  recordScan,
+  recentScans,
+  deleteBook,
+  exportAll,
+  getLookupCache,
+  setLookupCache,
+  clearLookupCache,
+  listOwners,
+  addOwner,
+  setDefaultOwner,
+  renameOwner,
+  deleteOwner,
+  defaultOwnerName,
+  listPendingEnrichment,
+} from './db.js';
 import { normaliseIsbn } from './isbn.js';
 import { missingVolumes, describeMissing, seriesKey, parseSeries } from './series.js';
 import { seriesFromWikidata } from './wikidata.js';
@@ -262,7 +284,44 @@ function workFromGoogle(gb, isbn13) {
   };
 }
 
-async function metaFor(isbn13) {
+/**
+ * Try again for a book that was added with no catalogue record.
+ *
+ * The scan flow is three taps and done, so a book with no metadata is still
+ * registered immediately. This runs afterwards, off the request path, and fills
+ * the record in if a provider answers later (Open Library adds records, or the
+ * Google key was only just wired up).
+ */
+const enrichQueue = new Set();
+
+function scheduleBackgroundEnrich(isbn13) {
+  if (enrichQueue.has(isbn13)) return;
+  enrichQueue.add(isbn13);
+
+  const timer = setTimeout(async () => {
+    try {
+      const meta = await metaFor(isbn13, { force: true });
+      const current = findBook(db, isbn13);
+      if (!meta.found || !current || !meta.work) return;
+      // Preserve everything the user owns: their state, owner and notes.
+      saveBook(db, {
+        isbn13,
+        work: meta.work,
+        state: current.state,
+        fields: { owner: current.owner ?? null, notes: current.notes ?? null },
+      });
+      console.log('[enrich] filled in', isbn13, '-', meta.work.title);
+    } catch (error) {
+      console.warn('[enrich] failed', isbn13, error?.message ?? error);
+    } finally {
+      enrichQueue.delete(isbn13);
+    }
+  }, 1500);
+  // Never hold the process open for a retry.
+  timer.unref?.();
+}
+
+async function metaFor(isbn13, { force = false } = {}) {
   const cached = getLookupCache(db, isbn13);
   const googleAvailable = Boolean(googleBooksKey());
 
@@ -278,7 +337,7 @@ async function metaFor(isbn13) {
     cached?.sources?.googleBooks === undefined || cached.sources.googleBooks === 'off';
   const stale = cached && (cached.legacy || (googleAvailable && googleNeverTried));
 
-  if (cached && !stale) return { ...cached, cached: true };
+  if (cached && !stale && !force) return { ...cached, cached: true };
 
   // Rebuild on top of what we already knew, so a refresh cannot lose data that
   // Open Library gave us the first time (its responses are not always stable).
@@ -601,9 +660,10 @@ const server = http.createServer(async (req, res) => {
         const meta = await metaFor(normalised.isbn13);
         work = meta.found ? meta.work : null;
       }
-      if (!work && !body.title) {
-        return json(res, 422, { error: 'not_found', isbn13: normalised.isbn13 });
-      }
+      // No metadata anywhere: register the book anyway. The scan flow promises
+      // that "I own it" works in one tap, so a book with no catalogue record must
+      // still land on the shelf - it is filled in by a background retry below.
+      const pendingLookup = !work && !body.title;
 
       // A title sent from the phone means the user chose manual entry, so their
       // text wins over anything the API knows - the lookup may well have been
@@ -622,7 +682,9 @@ const server = http.createServer(async (req, res) => {
           volume: body.volume ?? work?.volume ?? null,
         };
       } else if (!work) {
-        work = { title: 'Untitled', authors: [], authorKey: null, series: null, volume: null };
+        // Empty, not 'Untitled': the works update only fills a blank title, and
+        // this record is expected to be filled in by the background retry.
+        work = { title: '', authors: [], authorKey: null, series: null, volume: null };
       }
 
       // Ratings are a second, optional call: a failure must not block the add.
@@ -647,6 +709,11 @@ const server = http.createServer(async (req, res) => {
         coverUrl: saved?.coverUrl,
       }).catch(() => null);
       recordScan(db, normalised.isbn13, state);
+
+      // Fill in a placeholder record later. Deliberately not awaited: the phone
+      // has its answer already, and a slow provider must not hold up the add.
+      if (pendingLookup) scheduleBackgroundEnrich(normalised.isbn13);
+
       return json(res, 201, { book: wrapBook(saved) });
     }
 
@@ -708,11 +775,60 @@ const server = http.createServer(async (req, res) => {
      * is the reset you want after adding an API key, not a wipe.
      */
     if (pathname === '/api/cache/reset' && method === 'POST') {
+      const lookups = clearLookupCache(db);
+      const coverMisses = clearAllCoverMisses(DATA_DIR);
+
+      // Books that were registered before any provider could name them get another
+      // attempt, in the background - which is what makes a later key useful for
+      // books already on the shelf.
+      const pending = listPendingEnrichment(db);
+      for (const isbn13 of pending.slice(0, 50)) scheduleBackgroundEnrich(isbn13);
+
       return json(res, 200, {
-        lookups: clearLookupCache(db),
-        coverMisses: clearAllCoverMisses(DATA_DIR),
+        lookups,
+        coverMisses,
+        pending: pending.length,
         books: stats(db).owned,
       });
+    }
+
+    /**
+     * Owners are entered once and then picked from a list, so adding a book never
+     * needs a second screen or a typed name.
+     */
+    if (pathname === '/api/owners' && method === 'GET') {
+      return json(res, 200, { owners: listOwners(db), defaultOwner: defaultOwnerName(db) });
+    }
+
+    if (pathname === '/api/owners' && method === 'POST') {
+      const body = await readBody(req);
+      try {
+        return json(res, 201, { owner: addOwner(db, body.name) });
+      } catch (error) {
+        const code = error?.message ?? 'bad_request';
+        return json(res, code === 'owner_exists' ? 409 : 400, { error: code });
+      }
+    }
+
+    const ownerMatch = /^\/api\/owners\/(\d+)$/.exec(pathname);
+    if (ownerMatch) {
+      const id = Number(ownerMatch[1]);
+      if (method === 'PATCH') {
+        const body = await readBody(req);
+        if (body.isDefault) setDefaultOwner(db, id);
+        if (body.name) {
+          try {
+            renameOwner(db, id, body.name);
+          } catch (error) {
+            return json(res, 400, { error: error?.message ?? 'bad_request' });
+          }
+        }
+        return json(res, 200, { owners: listOwners(db), defaultOwner: defaultOwnerName(db) });
+      }
+      if (method === 'DELETE') {
+        deleteOwner(db, id);
+        return json(res, 200, { owners: listOwners(db), defaultOwner: defaultOwnerName(db) });
+      }
     }
 
     if (pathname === '/api/stats' && method === 'GET') return json(res, 200, stats(db));

@@ -55,6 +55,15 @@ CREATE TABLE IF NOT EXISTS books (
   updated_at  TEXT NOT NULL
 );
 
+-- People who can own a book. Entered once, then chosen from a drop-down instead
+-- of being retyped for every add (which is how "Me", "me" and "Mum" all appeared).
+CREATE TABLE IF NOT EXISTS owners (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL UNIQUE,
+  is_default  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS books_state_idx ON books(state);
 CREATE INDEX IF NOT EXISTS books_work_idx ON books(work_id);
 CREATE INDEX IF NOT EXISTS works_series_idx ON works(series_key);
@@ -104,6 +113,14 @@ function migrate(db) {
 
   // Existing databases predate Google-only records, which carry their own
   // thumbnail URL because there is no Open Library cover id to look up.
+  const owners = db.prepare('SELECT COUNT(*) AS n FROM owners').get().n;
+  if (owners === 0) {
+    db.prepare('INSERT INTO owners (name, is_default, created_at) VALUES (?, 1, ?)').run(
+      'Me',
+      new Date().toISOString(),
+    );
+  }
+
   const workColumns = db.prepare('PRAGMA table_info(works)').all().map((c) => c.name);
   if (!workColumns.includes('cover_url')) db.exec('ALTER TABLE works ADD COLUMN cover_url TEXT');
 }
@@ -267,7 +284,7 @@ export function saveBook(db, { isbn13, work, state = 'owned', fields = {} }) {
         fields.location ?? null,
         // A book you own belongs to you unless told otherwise; a wishlist entry
         // has no owner yet.
-        fields.owner ?? (state === 'owned' ? 'Me' : null),
+        fields.owner ?? (state === 'owned' ? defaultOwnerName(db) : null),
         fields.loaned_to ?? null,
         fields.loaned_at ?? null,
         at,
@@ -507,4 +524,101 @@ export function exportAll(db) {
  */
 export function clearLookupCache(db) {
   return db.prepare('DELETE FROM lookup_cache').run().changes;
+}
+
+
+/**
+ * People who can own a book.
+ *
+ * This exists so ownership is chosen from a list rather than typed every time -
+ * free text had already produced "Me" and "me" as different owners.
+ */
+export function listOwners(db) {
+  return db
+    .prepare('SELECT id, name, is_default FROM owners ORDER BY is_default DESC, name COLLATE NOCASE')
+    .all()
+    .map((row) => ({ id: row.id, name: row.name, isDefault: Boolean(row.is_default) }));
+}
+
+export function defaultOwnerName(db) {
+  const row = db
+    .prepare('SELECT name FROM owners ORDER BY is_default DESC, id LIMIT 1')
+    .get();
+  return row?.name ?? null;
+}
+
+/** Add an owner. Returns the stored row; the first owner added becomes default. */
+export function addOwner(db, name) {
+  const clean = String(name ?? '').trim();
+  if (!clean) throw new Error('owner_name_required');
+  if (clean.length > 60) throw new Error('owner_name_too_long');
+
+  const existing = db.prepare('SELECT id FROM owners WHERE name = ? COLLATE NOCASE').get(clean);
+  if (existing) throw new Error('owner_exists');
+
+  const isFirst = db.prepare('SELECT COUNT(*) AS n FROM owners').get().n === 0;
+  const info = db
+    .prepare('INSERT INTO owners (name, is_default, created_at) VALUES (?, ?, ?)')
+    .run(clean, isFirst ? 1 : 0, new Date().toISOString());
+  return { id: Number(info.lastInsertRowid), name: clean, isDefault: isFirst };
+}
+
+/** Exactly one owner is the default: the one applied when a book is added. */
+export function setDefaultOwner(db, id) {
+  const row = db.prepare('SELECT id FROM owners WHERE id = ?').get(id);
+  if (!row) return false;
+  db.prepare('UPDATE owners SET is_default = 0').run();
+  db.prepare('UPDATE owners SET is_default = 1 WHERE id = ?').run(id);
+  return true;
+}
+
+/** Rename in place, so books already attributed to that person follow along. */
+export function renameOwner(db, id, name) {
+  const clean = String(name ?? '').trim();
+  if (!clean) throw new Error('owner_name_required');
+  const current = db.prepare('SELECT name FROM owners WHERE id = ?').get(id);
+  if (!current) return false;
+  db.exec('BEGIN');
+  try {
+    db.prepare('UPDATE owners SET name = ? WHERE id = ?').run(clean, id);
+    db.prepare('UPDATE books SET owner = ? WHERE owner = ?').run(clean, current.name);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  return true;
+}
+
+/**
+ * Remove an owner from the list. Books keep the name they were given - deleting a
+ * person from a drop-down must never silently un-own their books.
+ */
+export function deleteOwner(db, id) {
+  const row = db.prepare('SELECT id, is_default FROM owners WHERE id = ?').get(id);
+  if (!row) return false;
+  db.prepare('DELETE FROM owners WHERE id = ?').run(id);
+  if (row.is_default) {
+    const next = db.prepare('SELECT id FROM owners ORDER BY id LIMIT 1').get();
+    if (next) db.prepare('UPDATE owners SET is_default = 1 WHERE id = ?').run(next.id);
+  }
+  return true;
+}
+
+
+/**
+ * Books registered before any provider could identify them. Their ISBN is on the
+ * shelf but the title is blank, which is what "rebuild book data" retries - so a
+ * key added later still rescues the books you scanned weeks ago.
+ */
+export function listPendingEnrichment(db) {
+  return db
+    .prepare(
+      `SELECT b.isbn13
+         FROM books b JOIN works w ON w.id = b.work_id
+        WHERE w.title IS NULL OR w.title = ''
+        ORDER BY b.added_at`,
+    )
+    .all()
+    .map((row) => row.isbn13);
 }
