@@ -54,6 +54,31 @@ input[type="password"], input[type="search"], input[type="text"], input:not([typ
 textarea { resize: vertical; min-height: 84px; line-height: 1.4; }
 input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
+/* A drop-down has to look like the text inputs beside it. Left unstyled it renders
+   as the browser's white box with black text, which stood out badly on the dark
+   sheet. appearance:none removes the native chrome so the arrow can be drawn. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--card-2);
+  /* the chevron is an inline SVG so it inherits no external request */
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath fill='%238a7f70' d='M1 1l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+  background-size: 12px 8px;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 12px;
+  padding: 14px 42px 14px 16px;
+  font-size: 16px; /* matches inputs, and stops iOS zooming on focus */
+  width: 100%;
+  font-family: inherit;
+  cursor: pointer;
+}
+select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Options are drawn by the OS, so they need their own colours on some platforms. */
+select option { background: #1b1712; color: var(--text); }
+
 button, .button {
   font: inherit;
   font-weight: 600;

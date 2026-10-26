@@ -19,15 +19,16 @@
 //    of a real cover (128x183 vs 128x186), and Google even renders it at 575x821
 //    when zoomed - so no size test separates them. Both are out by default: a
 //    missing cover beats a confidently wrong one.
-import { existsSync, mkdirSync, writeFileSync, statSync, rmSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, statSync, rmSync, readFileSync, readdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { isbn13To10 } from './isbn.js';
 import { verifiedSearchDoc } from './openlibrary.js';
+import { viewApiLookup } from './googlebooks.js';
 
 // Bump when the fetching rules change: stored "no cover" markers are cleared on
 // upgrade, because a marker written by a buggy rule would otherwise hide a cover
 // for a month.
-export const COVER_PIPELINE_VERSION = 2;
+export const COVER_PIPELINE_VERSION = 3;
 
 const MIN_COVER_BYTES = 1500;
 const NEGATIVE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // re-check a "no cover" monthly
@@ -153,7 +154,11 @@ function writeMiss(dataDir, isbn13, reason) {
  * Ensure a cover exists on disk for this ISBN. Returns a local path or null.
  * `force` ignores an existing negative marker (used by "reload missing covers").
  */
-export async function ensureCover(dataDir, book, { timeoutMs = 8000, force = false } = {}) {
+export async function ensureCover(
+  dataDir,
+  book,
+  { timeoutMs = 8000, force = false, allowMissMarker = true } = {},
+) {
   const { isbn13 } = book;
   if (!isbn13) return null;
   mkdirSync(join(dataDir, 'covers'), { recursive: true });
@@ -161,7 +166,10 @@ export async function ensureCover(dataDir, book, { timeoutMs = 8000, force = fal
   const file = coverFile(dataDir, isbn13);
   if (existsSync(file) && statSync(file).size >= MIN_COVER_BYTES) return file;
   if (force) rmSync(missFile(dataDir, isbn13), { force: true });
-  if (!force && missIsFresh(dataDir, isbn13)) return null;
+  // Respect a stored miss unless the caller says otherwise. The scan preview asks
+  // for art before the book exists in the catalogue, and must not be allowed to
+  // leave a 30-day "no cover" marker behind.
+  if (!force && allowMissMarker && missIsFresh(dataDir, isbn13)) return null;
 
   // Step 1: does Open Library actually know this ISBN? Without this, both the
   // search and the cover endpoints invent answers.
@@ -170,21 +178,33 @@ export async function ensureCover(dataDir, book, { timeoutMs = 8000, force = fal
   // does have a thumbnail URL that Google returned *for that ISBN* - already
   // verified, so it is trusted ahead of anything Open Library would guess.
   const doc = book.coverUrl ? null : await verifiedSearchDoc(isbn13, { timeoutMs });
-  if (!doc && !book.coverUrl) {
-    writeMiss(dataDir, isbn13, 'isbn-unknown');
-    return null;
-  }
 
   // Step 2: try the artwork for that verified record.
   const urls = book.coverUrl ? [book.coverUrl] : [];
   if (doc) urls.push(...(await candidateUrls(book, doc)));
+
+  // Step 3: Google's index. Keyless, and it is the only source for books that
+  // exist nowhere else - the metadata-only volumes with no Open Library record.
+  if (!urls.length) {
+    const view = await viewApiLookup(isbn13, { timeoutMs }).catch(() => null);
+    if (view?.thumbnailUrl) urls.push(view.thumbnailUrl);
+  }
+
+  if (!urls.length) {
+    if (allowMissMarker) writeMiss(dataDir, isbn13, 'isbn-unknown');
+    return null;
+  }
 
   let sawTransientFailure = false;
   for (const url of urls) {
     for (let attempt = 0; attempt < ATTEMPTS_PER_URL; attempt += 1) {
       const result = await fetchImage(url, timeoutMs);
       if (result.bytes) {
-        writeFileSync(file, result.bytes);
+        // Written to a temporary name and renamed: writeFileSync truncates first,
+        // and a request arriving mid-write would stream a zero-byte cover.
+        const temp = `${file}.${process.pid}.tmp`;
+        writeFileSync(temp, result.bytes);
+        renameSync(temp, file);
         rmSync(missFile(dataDir, isbn13), { force: true });
         return file;
       }
@@ -193,8 +213,9 @@ export async function ensureCover(dataDir, book, { timeoutMs = 8000, force = fal
     }
   }
 
-  // Cache the miss only when nothing failed for network reasons.
-  if (!sawTransientFailure) writeMiss(dataDir, isbn13, 'no-image');
+  // Cache the miss only when nothing failed for network reasons, and only when the
+  // caller is in a position to know (see allowMissMarker above).
+  if (!sawTransientFailure && allowMissMarker) writeMiss(dataDir, isbn13, 'no-image');
   return null;
 }
 

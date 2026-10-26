@@ -553,7 +553,13 @@ async function serveCover(req, res, isbn13) {
       `SELECT b.isbn13, w.cover_id, w.cover_url FROM books b JOIN works w ON w.id = b.work_id WHERE b.isbn13 = ?`,
     )
     .get(isbn13);
-  const file = await ensureCover(DATA_DIR, { isbn13, coverId: row?.cover_id, coverUrl: row?.cover_url });
+  // No catalogue row yet: this is a scan preview. Ask for art, but do not record a
+  // miss - the book may well be added a second later with a cover URL attached.
+  const file = await ensureCover(DATA_DIR, {
+    isbn13,
+    coverId: row?.cover_id,
+    coverUrl: row?.cover_url,
+  }, { allowMissMarker: Boolean(row) });
   if (!file) {
     // Short cache: a cover can appear later (OL adds them, or the fallback
     // sources were briefly unreachable), and a phone should pick it up quickly
@@ -712,7 +718,9 @@ const server = http.createServer(async (req, res) => {
         state,
         fields: pickFields(body),
       });
-      // Warm the cover cache so the shelf view is instant afterwards.
+      // Warm the cover cache so the shelf view is instant afterwards. Any marker
+      // from a scan preview is dropped first: we now know more than we did then.
+      clearCoverMiss(DATA_DIR, normalised.isbn13);
       await ensureCover(DATA_DIR, {
         isbn13: normalised.isbn13,
         coverId: saved?.coverId,
