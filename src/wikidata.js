@@ -82,15 +82,50 @@ async function sparql(query, { timeoutMs = 12000 } = {}) {
  *
  * Returns null when Wikidata cannot help, which is common for small-press series.
  */
-export async function seriesVolumes(workKey) {
-  if (!isWorkKey(workKey)) return null;
+export async function seriesVolumes(workKey, seriesName) {
+  let qid = null;
+  let matchedBy = null;
 
-  const seriesRows = await sparql(
-    `SELECT ?series WHERE { ?w wdt:P648 "${workKey}" . ?w wdt:P179 ?series . } LIMIT 1`,
-  );
-  const seriesUri = seriesRows?.results?.bindings?.[0]?.series?.value;
-  const qid = seriesUri?.split('/').pop();
-  if (!qid || !/^Q\d+$/.test(qid)) return null;
+  // 1. Through a book we own: its Open Library work id maps to the series item.
+  if (isWorkKey(workKey)) {
+    const rows = await sparql(
+      `SELECT ?series WHERE { ?w wdt:P648 "${workKey}" . ?w wdt:P179 ?series . } LIMIT 1`,
+    );
+    const uri = rows?.results?.bindings?.[0]?.series?.value;
+    const candidate = uri?.split('/').pop();
+    if (candidate && /^Q\d+$/.test(candidate)) {
+      qid = candidate;
+      matchedBy = 'work';
+    }
+  }
+
+  // 2. By the series NAME, matched against labels and aliases of items that books
+  //    actually point at. This is what rescues series whose work ids are not in
+  //    Wikidata: "Point Horror" and "Dune Chronicles" both resolve this way, one
+  //    of them only through an alias.
+  if (!qid && seriesName) {
+    // Quotes and backslashes would break out of the SPARQL string literal.
+    const safe = String(seriesName)
+      .replace(/["\\]/g, ' ')
+      .slice(0, 80)
+      .trim();
+    if (safe) {
+      const rows = await sparql(
+        `SELECT ?s WHERE {
+           ?w wdt:P179 ?s .
+           { ?s rdfs:label "${safe}"@en } UNION { ?s skos:altLabel "${safe}"@en }
+         } LIMIT 1`,
+      );
+      const uri = rows?.results?.bindings?.[0]?.s?.value;
+      const candidate = uri?.split('/').pop();
+      if (candidate && /^Q\d+$/.test(candidate)) {
+        qid = candidate;
+        matchedBy = 'name';
+      }
+    }
+  }
+
+  if (!qid) return null;
 
   const data = await sparql(
     `SELECT ?v ?vLabel ?ord ?date ?ol WHERE {
@@ -133,5 +168,5 @@ export async function seriesVolumes(workKey) {
     return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
   });
 
-  return { seriesQid: qid, volumes };
+  return { seriesQid: qid, matchedBy, volumes };
 }

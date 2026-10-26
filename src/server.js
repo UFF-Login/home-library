@@ -956,15 +956,18 @@ const server = http.createServer(async (req, res) => {
       const summary = seriesSummary(db, seriesKeyValue);
       if (!summary) return json(res, 404, { error: 'unknown_series' });
 
-      let cached = getSeriesCache(db, seriesKeyValue);
+      // The key carries a version: answers cached by an older, narrower lookup must
+      // not outlive the fix that widened it.
+      const cacheKey = `v2:${seriesKeyValue}`;
+      let cached = getSeriesCache(db, cacheKey);
       if (!cached) {
         const workKey = summary.items.find((item) => item.workKey)?.workKey ?? null;
-        const fromWiki = workKey ? await seriesVolumes(workKey).catch(() => null) : null;
+        const fromWiki = await seriesVolumes(workKey, summary.name).catch(() => null);
         cached = fromWiki ?? { seriesQid: null, volumes: [] };
         // Only cache a real answer. Caching "nothing" because no book in the series
         // had an Open Library work key would hide the titles for a month after a
         // single book was added by ISBN alone.
-        if (fromWiki) setSeriesCache(db, seriesKeyValue, cached);
+        if (fromWiki) setSeriesCache(db, cacheKey, cached);
       }
 
       const normalise = (value) =>
@@ -987,6 +990,8 @@ const server = http.createServer(async (req, res) => {
 
       return json(res, 200, {
         seriesQid: cached.seriesQid ?? null,
+        // 'work' (found through a book we own) or 'name' (matched a label/alias)
+        matchedBy: cached.matchedBy ?? null,
         total: (cached.volumes ?? []).length,
         missing,
       });

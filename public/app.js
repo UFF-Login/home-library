@@ -1483,13 +1483,20 @@ $('series-list').addEventListener('click', async (event) => {
     const missing = data.missing ?? [];
 
     if (!missing.length) {
-      out.innerHTML = `<p class="hint" style="margin:0">${
-        data.total
-          ? 'Nothing else is known for this series — you have them all.'
-          : 'Wikidata does not list this series, so the missing titles are unknown.'
-      }</p>`;
+      // Distinguish the three honest outcomes: everything known, the series is known
+      // but barely modelled, and nothing at all. "Unknown" alone left the reader
+      // unable to tell whether the app was broken.
+      const message = data.total
+        ? 'Nothing else is known for this series — you have them all.'
+        : data.seriesQid
+          ? 'Wikidata knows this series but lists none of its books. The numbered gaps above are still accurate.'
+          : 'Wikidata has no record of this series, so the titles are unavailable. The numbered gaps above still show what you are missing.';
+      out.innerHTML = `<p class="hint" style="margin:0">${message}</p>`;
     } else {
-      out.innerHTML = `<div class="more-head">Not on your shelf yet · ${missing.length}
+      const sparse = data.total > 0 && data.total <= 3
+        ? `<p class="hint" style="margin:0 0 6px">Wikidata lists only ${data.total} of this series' books, so this list is incomplete — the numbered gaps above remain the reliable count.</p>`
+        : '';
+      out.innerHTML = `${sparse}<div class="more-head">Not on your shelf yet · ${missing.length}
           ${data.total ? `<span>of ${data.total} known</span>` : ''}</div>
         <div class="more-list">${missing
           .slice(0, 80)
@@ -1504,7 +1511,8 @@ $('series-list').addEventListener('click', async (event) => {
     }
     out.dataset.loaded = '1';
     out.hidden = false;
-    button.textContent = 'Hide the missing titles';
+    // Only promise a list when there is one.
+    button.textContent = missing.length ? 'Hide the missing titles' : 'Hide';
   } catch {
     button.textContent = 'Could not reach Wikidata — try again';
   } finally {
