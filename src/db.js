@@ -660,3 +660,27 @@ export function wipeDatabase(db) {
   }
   return before;
 }
+
+
+/**
+ * Rewrite blurbs that still contain provider markup.
+ *
+ * Google and Open Library send descriptions as HTML fragments. They were stored
+ * verbatim and the UI escapes text, so "<p>" and "<br>" appeared on screen. The
+ * cleaner is injected so this file stays independent of the HTML rules.
+ */
+export function cleanDescriptions(db, clean) {
+  const rows = db
+    .prepare('SELECT id, description FROM works WHERE description IS NOT NULL')
+    .all();
+  const update = db.prepare('UPDATE works SET description = ? WHERE id = ?');
+  let changed = 0;
+  for (const row of rows) {
+    const cleaned = clean(row.description);
+    if (cleaned !== row.description) {
+      update.run(cleaned, row.id);
+      changed += 1;
+    }
+  }
+  return changed;
+}

@@ -1,3 +1,4 @@
+import { stripHtml } from './util.js';
 import { isbn13To10 } from './isbn.js';
 
 // Google Books metadata, used only when an API key is configured.
@@ -109,7 +110,8 @@ export function volumeToRecord(info, isbn13, { trusted = false } = {}) {
     publisher: info.publisher ?? null,
     published: yearOf(info.publishedDate),
     pages: Number(info.pageCount) || null,
-    description: info.description ?? null,
+    // Provider blurbs arrive as HTML fragments; stored text must be plain.
+    description: stripHtml(info.description),
     categories: Array.isArray(info.categories) ? info.categories : [],
     language: info.language ?? null,
     rating: Number.isFinite(info.averageRating) ? info.averageRating : null,

@@ -37,6 +37,7 @@ import {
   defaultOwnerName,
   listPendingEnrichment,
   wipeDatabase,
+  cleanDescriptions,
 } from './db.js';
 import { normaliseIsbn } from './isbn.js';
 import { missingVolumes, describeMissing, seriesKey, parseSeries } from './series.js';
@@ -45,6 +46,7 @@ import { googleBooksLookup, googleBooksProbe, googleBooksKey } from './googleboo
 import { authorKey } from './authors.js';
 import { lookupIsbn, fetchRating } from './lookup.js';
 import { ensurePin, createAuth, parseCookies } from './auth.js';
+import { stripHtml } from './util.js';
 import { ensureCover, coverFile, hasCover, coverMissPending, clearCoverMiss, clearAllCoverMisses, COVER_PIPELINE_VERSION } from './covers.js';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
@@ -145,6 +147,17 @@ const db = openDb(join(DATA_DIR, 'bookshelf.db'));
 // "No cover" markers are cached for 30 days. When the way covers are fetched
 // changes, every marker written by the old rules is suspect - a throttled host
 // answering 200 with an empty body used to look like "this book has no cover".
+// Blurbs stored before the HTML was stripped still contain markup. Run once, and
+// drop the lookup cache in the same pass because it holds the raw payloads.
+{
+  if (getMeta(db, 'descriptionCleaned') !== '1') {
+    const changed = cleanDescriptions(db, stripHtml);
+    clearLookupCache(db);
+    setMeta(db, 'descriptionCleaned', '1');
+    if (changed) console.log(`[meta] cleaned markup out of ${changed} description(s)`);
+  }
+}
+
 {
   const pipeline = String(COVER_PIPELINE_VERSION);
   if (getMeta(db, 'coverPipelineVersion') !== pipeline) {
@@ -361,11 +374,25 @@ async function metaFor(isbn13, { force = false } = {}) {
    * which is where the "40 seconds for one book" came from. Both answers are used
    * either way - Open Library for the record, Google for the rating and blurb.
    */
+  let olMs = 0;
+  let gbMs = 0;
+
+  const olStarted = Date.now();
   const olPromise = cached?.work
     ? Promise.resolve({ found: true, work: { ...cached.work }, isbn13 })
-    : lookupIsbn(isbn13).catch(() => ({ found: false, work: null, isbn13 }));
+    : lookupIsbn(isbn13)
+        .catch(() => ({ found: false, work: null, isbn13 }))
+        .finally(() => {
+          olMs = Date.now() - olStarted;
+        });
+
+  const gbStarted = Date.now();
   const gbPromise = googleAvailable
-    ? googleBooksLookup(isbn13).catch(() => ({ status: 'failed' }))
+    ? googleBooksLookup(isbn13)
+        .catch(() => ({ status: 'failed' }))
+        .finally(() => {
+          gbMs = Date.now() - gbStarted;
+        })
     : null;
 
   const result = await olPromise;
@@ -445,10 +472,25 @@ async function metaFor(isbn13, { force = false } = {}) {
   // this entry would be re-enriched on every single scan.
   if (googleAvailable && sources.googleBooks === 'off') sources.googleBooks = 'skipped';
 
+  const lookupMs = Date.now() - started;
+  // A slow scan is worth knowing about, with enough detail to blame a provider.
+  if (lookupMs > 5000) {
+    console.warn(
+      `[lookup] ${isbn13} took ${lookupMs}ms (openLibrary ${olMs}ms, google ${gbMs}ms, google=${sources.googleBooks})`,
+    );
+  }
+
   setLookupCache(db, isbn13, { ...result, sources });
   // Reported so the phone can show how long the details took, rather than only
   // the millisecond verdict time.
-  return { ...result, sources, cached: false, lookupMs: Date.now() - started };
+  return {
+    ...result,
+    sources,
+    cached: false,
+    lookupMs,
+    // Which provider was slow, if any - a 13-second scan needs an answer.
+    timings: { openLibraryMs: olMs, googleMs: gbMs },
+  };
 }
 
 /** Attach the gap maths to a series object for the UI. */
@@ -660,6 +702,7 @@ const server = http.createServer(async (req, res) => {
         // (tried, nothing) or 'off' (no key configured).
         sources: meta.sources ?? {},
         lookupMs: meta.lookupMs ?? null,
+        timings: meta.timings ?? null,
       });
     }
 
