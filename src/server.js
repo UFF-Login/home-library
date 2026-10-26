@@ -226,6 +226,42 @@ async function handleScan(isbnRaw) {
  * Metadata for an ISBN, from cache or Open Library. This is the slow call, kept
  * separate so the verdict above never waits on it.
  */
+/**
+ * Build a work record from a Google Books volume alone.
+ *
+ * This is the rescue path: Open Library has no record for the ISBN, so without it
+ * the scan ended at "no catalogue record" and the book could only be added by
+ * typing title and author by hand. Series still cannot come from Google - the
+ * Volume schema has no such field - so it is parsed from the title, which catches
+ * the common "<Title> (Series, Book 3)" convention.
+ */
+function workFromGoogle(gb, isbn13) {
+  const authors = gb.authors ?? [];
+  const parsed = parseSeries({ title: gb.title, subtitle: gb.subtitle });
+  return {
+    title: gb.title ?? 'Untitled',
+    subtitle: gb.subtitle ?? null,
+    authors,
+    authorKey: authors[0] ? authorKey(authors[0]) : null,
+    series: parsed.series ?? null,
+    seriesKey: parsed.series ? seriesKey(parsed.series) : null,
+    volume: parsed.volume ?? null,
+    publisher: gb.publisher ?? null,
+    published: gb.published ?? null,
+    pages: gb.pages ?? null,
+    description: gb.description ?? null,
+    subjects: gb.categories ?? [],
+    rating: gb.rating ?? null,
+    ratingsCount: gb.ratingsCount ?? null,
+    // No Open Library identifiers exist for this book; the cover comes from
+    // Google's own thumbnail instead.
+    workKey: null,
+    coverId: null,
+    coverUrl: gb.coverUrl ?? null,
+    isbn13,
+  };
+}
+
 async function metaFor(isbn13) {
   const cached = getLookupCache(db, isbn13);
   const googleAvailable = Boolean(googleBooksKey());
@@ -257,6 +293,18 @@ async function metaFor(isbn13) {
       ? cached.sources.googleBooks
       : 'off',
   };
+
+  // Nothing in Open Library: ask Google to build the record. This must happen
+  // BEFORE the enrichment branch, because that branch only runs when a record
+  // already exists - which is why unknown ISBNs never reached Google at all.
+  if (!result.found && googleAvailable) {
+    const gb = await googleBooksByIsbn(isbn13).catch(() => null);
+    sources.googleBooks = gb ? 'ok' : 'failed';
+    if (gb) {
+      result.found = true;
+      result.work = workFromGoogle(gb, isbn13);
+    }
+  }
 
   if (result.found && result.work) {
     const work = result.work;
@@ -431,10 +479,10 @@ async function serveCover(req, res, isbn13) {
   if (!/^\d{13}$/.test(isbn13)) return json(res, 400, { error: 'bad isbn' });
   const row = db
     .prepare(
-      `SELECT b.isbn13, w.cover_id FROM books b JOIN works w ON w.id = b.work_id WHERE b.isbn13 = ?`,
+      `SELECT b.isbn13, w.cover_id, w.cover_url FROM books b JOIN works w ON w.id = b.work_id WHERE b.isbn13 = ?`,
     )
     .get(isbn13);
-  const file = await ensureCover(DATA_DIR, { isbn13, coverId: row?.cover_id });
+  const file = await ensureCover(DATA_DIR, { isbn13, coverId: row?.cover_id, coverUrl: row?.cover_url });
   if (!file) {
     // Short cache: a cover can appear later (OL adds them, or the fallback
     // sources were briefly unreachable), and a phone should pick it up quickly
@@ -590,7 +638,11 @@ const server = http.createServer(async (req, res) => {
         fields: pickFields(body),
       });
       // Warm the cover cache so the shelf view is instant afterwards.
-      await ensureCover(DATA_DIR, { isbn13: normalised.isbn13, coverId: saved?.coverId }).catch(() => null);
+      await ensureCover(DATA_DIR, {
+        isbn13: normalised.isbn13,
+        coverId: saved?.coverId,
+        coverUrl: saved?.coverUrl,
+      }).catch(() => null);
       recordScan(db, normalised.isbn13, state);
       return json(res, 201, { book: wrapBook(saved) });
     }
@@ -699,7 +751,7 @@ const server = http.createServer(async (req, res) => {
           cursor += 1;
           const file = await ensureCover(
             DATA_DIR,
-            { isbn13: row.isbn13, coverId: row.cover_id },
+            { isbn13: row.isbn13, coverId: row.cover_id, coverUrl: row.cover_url },
             { force: true, timeoutMs: 6000 },
           ).catch(() => null);
           if (file) found += 1;

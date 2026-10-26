@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS works (
   ratings_count   INTEGER,
   work_key        TEXT,          -- Open Library work key, needed for ratings
   cover_id        TEXT,          -- Open Library cover id, fallback for covers
+  cover_url       TEXT,          -- provider thumbnail URL (Google-only records)
   subjects        TEXT,          -- JSON array, kept for future tags
   updated_at      TEXT NOT NULL
 );
@@ -100,6 +101,16 @@ function migrate(db) {
   // "Who owns it" replaced "where is it": the shelf location was never the
   // interesting fact, ownership is.
   if (!columns.includes('owner')) db.exec('ALTER TABLE books ADD COLUMN owner TEXT');
+
+  // Existing databases predate Google-only records, which carry their own
+  // thumbnail URL because there is no Open Library cover id to look up.
+  const workColumns = db.prepare('PRAGMA table_info(works)').all().map((c) => c.name);
+  if (!workColumns.includes('cover_url')) db.exec('ALTER TABLE works ADD COLUMN cover_url TEXT');
+}
+
+/** Used by tests and by the rebuild action to prove a migration ran. */
+export function columnsOf(db, table) {
+  return db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
 }
 
 export function getMeta(db, key) {
@@ -118,7 +129,7 @@ export function findBook(db, isbn13) {
     .prepare(
       `SELECT b.*, w.title, w.subtitle, w.authors, w.author_key, w.series, w.series_key,
               w.volume, w.publisher, w.published, w.pages, w.description, w.rating,
-              w.ratings_count, w.cover_id
+              w.ratings_count, w.cover_id, w.cover_url
          FROM books b JOIN works w ON w.id = b.work_id
         WHERE b.isbn13 = ?`,
     )
@@ -165,6 +176,7 @@ export function saveBook(db, { isbn13, work, state = 'owned', fields = {} }) {
            ratings_count = COALESCE(ratings_count, ?),
            work_key = COALESCE(work_key, ?),
            cover_id = COALESCE(cover_id, ?),
+           cover_url = COALESCE(cover_url, ?),
            updated_at = ?
          WHERE id = ?`,
       ).run(
@@ -183,6 +195,7 @@ export function saveBook(db, { isbn13, work, state = 'owned', fields = {} }) {
         work?.ratingsCount ?? null,
         work?.workKey ?? null,
         work?.coverId ?? null,
+        work?.coverUrl ?? null,
         at,
         workId,
       );
@@ -191,8 +204,8 @@ export function saveBook(db, { isbn13, work, state = 'owned', fields = {} }) {
         .prepare(
           `INSERT INTO works (title, subtitle, authors, author_key, series, series_key,
                               volume, publisher, published, pages, description, rating,
-                              ratings_count, work_key, cover_id, subjects, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                              ratings_count, work_key, cover_id, cover_url, subjects, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
         .run(
           work?.title ?? 'Untitled',
@@ -210,6 +223,7 @@ export function saveBook(db, { isbn13, work, state = 'owned', fields = {} }) {
           work?.ratingsCount ?? null,
           work?.workKey ?? null,
           work?.coverId ?? null,
+          work?.coverUrl ?? null,
           work?.subjects?.length ? JSON.stringify(work.subjects) : null,
           at,
         );
@@ -304,6 +318,7 @@ function rowToBook(row) {
     rating: row.rating,
     ratingsCount: row.ratings_count,
     coverId: row.cover_id ?? null,
+    coverUrl: row.cover_url ?? null,
     cover: `/cover/${row.isbn13}.jpg`,
   };
 }

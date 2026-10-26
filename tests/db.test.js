@@ -17,6 +17,7 @@ import {
   stats,
   deleteBook,
   exportAll,
+  columnsOf,
 } from '../src/db.js';
 import { missingVolumes } from '../src/series.js';
 
@@ -175,4 +176,32 @@ test('a book you add is owned by you by default, a wishlist entry is not', () =>
   // Setting an owner explicitly is respected.
   const explicit = saveBook(db, { isbn13: '9780590453691', work: goosebumps(3, 'Monster Blood'), fields: { owner: 'Dad' } });
   assert.equal(explicit.owner, 'Dad');
+});
+
+test('a Google-only record keeps its own cover URL through the database', () => {
+  const db = freshDb();
+  // No Open Library identifiers exist for these, so the thumbnail URL is the only
+  // way this book will ever have a picture.
+  const saved = saveBook(db, {
+    isbn13: '9780330360890',
+    work: {
+      title: 'Ice Station',
+      authors: ['Matthew Reilly'],
+      authorKey: 'reilly:m',
+      coverId: null,
+      coverUrl: 'https://books.google.com/books/content?id=abc&zoom=1',
+      workKey: null,
+    },
+  });
+  assert.equal(saved.coverUrl, 'https://books.google.com/books/content?id=abc&zoom=1');
+
+  const reread = findBook(db, '9780330360890');
+  assert.equal(reread.coverUrl, saved.coverUrl, 'must survive the write/read round-trip');
+  assert.equal(reread.coverId, null);
+});
+
+test('an existing database gains the cover_url column on open', () => {
+  const db = freshDb();
+  assert.ok(columnsOf(db, 'works').includes('cover_url'), 'migration must add it');
+  assert.ok(columnsOf(db, 'works').includes('subjects'), 'older columns still present');
 });

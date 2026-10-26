@@ -151,15 +151,22 @@ export async function ensureCover(dataDir, book, { timeoutMs = 8000, force = fal
 
   // Step 1: does Open Library actually know this ISBN? Without this, both the
   // search and the cover endpoints invent answers.
-  const doc = await verifiedSearchDoc(isbn13, { timeoutMs });
-  if (!doc) {
+  //
+  // A book rescued from Google Books has no Open Library record at all, but it
+  // does have a thumbnail URL that Google returned *for that ISBN* - already
+  // verified, so it is trusted ahead of anything Open Library would guess.
+  const doc = book.coverUrl ? null : await verifiedSearchDoc(isbn13, { timeoutMs });
+  if (!doc && !book.coverUrl) {
     writeMiss(dataDir, isbn13, 'isbn-unknown');
     return null;
   }
 
   // Step 2: try the artwork for that verified record.
+  const urls = book.coverUrl ? [book.coverUrl] : [];
+  if (doc) urls.push(...(await candidateUrls(book, doc)));
+
   let sawTransientFailure = false;
-  for (const url of await candidateUrls(book, doc)) {
+  for (const url of urls) {
     for (let attempt = 0; attempt < ATTEMPTS_PER_URL; attempt += 1) {
       const result = await fetchImage(url, timeoutMs);
       if (result.bytes) {
