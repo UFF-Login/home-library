@@ -1011,15 +1011,28 @@ const server = http.createServer(async (req, res) => {
 
           for (const query of queries) {
             const found = await googleBooksSearch(query).catch(() => null);
-            const name = normaliseTitle(summary.name);
+            const nameKey = normaliseTitle(summary.name);
             const volumes = [];
             const seenTitles = new Set();
             for (const volume of found ?? []) {
               const titleKey = normaliseTitle(volume.title);
-              if (!name || !titleKey.includes(name)) continue;
-              if (seenTitles.has(titleKey)) continue;
-              seenTitles.add(titleKey);
+              if (!nameKey || seenTitles.has(titleKey)) continue;
+
+              /**
+               * The series MARKER is the evidence, not the name appearing in the
+               * title. A search for "Andromache" also returns Euripides' tragedy
+               * and Racine's Andromaque - books that merely contain the word. A
+               * real volume of the series carries "(Andromache, #2)" in its title
+               * or subtitle, which is exactly what parseSeries extracts.
+               */
               const parsed = parseSeries({ title: volume.title, subtitle: volume.subtitle });
+              const parsedKey = normaliseTitle(parsed.series);
+              const sameSeries =
+                Boolean(parsedKey) &&
+                (parsedKey === nameKey || parsedKey.includes(nameKey) || nameKey.includes(parsedKey));
+              if (!sameSeries) continue;
+
+              seenTitles.add(titleKey);
               volumes.push({
                 title: volume.title,
                 volume: parsed.volume != null ? Math.trunc(parsed.volume) : null,
