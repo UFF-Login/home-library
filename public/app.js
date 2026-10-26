@@ -427,6 +427,12 @@ function sourcesLine(data) {
     const why = data.sources?.googleReason ? `: ${data.sources.googleReason}` : '';
     return `<div class="sources-line warn">Open Library has no record, and Google Books would not answer${esc(why)}</div>`;
   }
+  if (google === 'partial') {
+    // Google recognises the ISBN but would not give up the details: say so rather
+    // than claiming the book is unknown.
+    const why = data.sources?.googleReason ? ` (${data.sources.googleReason})` : '';
+    return `<div class="sources-line warn">Open Library has no record. Google knows this book but would not return its details${esc(why)}</div>`;
+  }
   if (google === 'ok' || google === 'empty') {
     return '<div class="sources-line warn">No record in Open Library or Google Books.</div>';
   }

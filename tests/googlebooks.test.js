@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { volumeToRecord } from '../src/googlebooks.js';
+import { volumeToRecord, parseViewApi } from '../src/googlebooks.js';
 
 // Shaped like a real response for a Matthew Reilly paperback, trimmed.
 const volumeInfo = {
@@ -99,4 +99,33 @@ test('edge=curl is stripped wherever it sits in the URL', () => {
     '9780330360890',
   );
   assert.equal(later.coverUrl, 'https://books.google.com/books/content?img=1');
+});
+
+test('the viewapi response resolves an ISBN to a volume id', () => {
+  // Captured verbatim from Google for 9781761720024 ("Just a Dog"), a
+  // metadata-only volume that `q=isbn:` cannot find.
+  const body =
+    'var _GBSBookInfo = {"ISBN:9781761720024":{"bib_key":"ISBN:9781761720024",' +
+    '"info_url":"https://books.google.com/books?id=bmXb0QEACAAJ\u0026source=gbs_ViewAPI",' +
+    '"preview_url":"https://books.google.com/books?id=bmXb0QEACAAJ\u0026source=gbs_ViewAPI",' +
+    '"thumbnail_url":"https://books.google.com/books/content?id=bmXb0QEACAAJ\u0026printsec=frontcover\u0026img=1\u0026zoom=5",' +
+    '"preview":"noview","embeddable":false}};';
+  const resolved = parseViewApi(body, 'ISBN:9781761720024');
+  assert.equal(resolved.volumeId, 'bmXb0QEACAAJ');
+  assert.match(resolved.thumbnailUrl, /books\/content\?id=bmXb0QEACAAJ/);
+  assert.equal(resolved.preview, 'noview');
+});
+
+test('viewapi with an unknown ISBN resolves to nothing, not an error', () => {
+  assert.equal(parseViewApi('var _GBSBookInfo = {};', 'ISBN:9798888888889'), null);
+  assert.equal(parseViewApi('<html>blocked</html>', 'ISBN:9798888888889'), null);
+});
+
+test('a volume found by id is trusted even without ISBN identifiers', () => {
+  // Metadata-only volumes often carry no industryIdentifiers, so the normal
+  // mismatch guard would reject the very records this path exists to rescue.
+  const noIdentifiers = { title: 'Just a Dog', authors: ['Michael Gerard Bauer'] };
+  assert.equal(volumeToRecord(noIdentifiers, '9781761720024'), null, 'untrusted still rejects');
+  const trusted = volumeToRecord(noIdentifiers, '9781761720024', { trusted: true });
+  assert.equal(trusted.title, 'Just a Dog');
 });

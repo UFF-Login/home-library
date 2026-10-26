@@ -348,7 +348,7 @@ async function metaFor(isbn13, { force = false } = {}) {
   const sources = {
     ...(cached?.sources ?? {}),
     // Keep 'ok'/'failed'; reset only the never-attempted case so it is retried.
-    googleBooks: ['ok', 'failed', 'skipped', 'empty'].includes(cached?.sources?.googleBooks)
+    googleBooks: ['ok', 'failed', 'skipped', 'empty', 'partial'].includes(cached?.sources?.googleBooks)
       ? cached.sources.googleBooks
       : 'off',
   };
@@ -359,7 +359,8 @@ async function metaFor(isbn13, { force = false } = {}) {
   if (!result.found && googleAvailable) {
     const looked = await googleBooksLookup(isbn13).catch(() => ({ status: 'failed' }));
     sources.googleBooks = looked.status;
-    if (looked.status === 'failed' && looked.reason) sources.googleReason = looked.reason;
+    if (looked.reason) sources.googleReason = looked.reason;
+    if (looked.status === 'partial' && looked.volumeId) sources.googleVolumeId = looked.volumeId;
     if (looked.status === 'ok') {
       result.found = true;
       result.work = workFromGoogle(looked.record, isbn13);
