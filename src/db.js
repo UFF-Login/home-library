@@ -684,3 +684,21 @@ export function cleanDescriptions(db, clean) {
   }
   return changed;
 }
+
+
+/**
+ * A counter embedded in cover URLs.
+ *
+ * Covers are cached by the phone for a year, so a URL that never changes means a
+ * deleted library still shows yesterday's pictures - the "I wiped the database but
+ * the images came straight back" report. Bumping this makes every cover URL new.
+ */
+export function bumpCoverEpoch(db) {
+  const next = Number(getMeta(db, 'coverEpoch') ?? 0) + 1;
+  setMeta(db, 'coverEpoch', next);
+  return next;
+}
+
+export function coverEpoch(db) {
+  return Number(getMeta(db, 'coverEpoch') ?? 0);
+}

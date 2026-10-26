@@ -64,7 +64,7 @@ async function getJson(url, timeoutMs = 8000) {
  * image here", or { definitive: false } when the attempt failed - so the caller
  * must not cache a miss.
  */
-async function fetchImage(url, timeoutMs) {
+async function fetchImage(url, timeoutMs, { allowDowngrade = true } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -90,7 +90,14 @@ async function fetchImage(url, timeoutMs) {
     if (buf.length === 0) return { definitive: false };
     if (buf.length < MIN_COVER_BYTES) return { definitive: true };
     return { bytes: buf };
-  } catch {
+  } catch (error) {
+    // Some providers only serve over plain http. We upgrade their URLs to https
+    // (Google's are http but support https), so a connection-level failure has to
+    // be retried on the original scheme rather than silently treated as "no art".
+    const networkFailure = !error?.name || error.name !== 'AbortError';
+    if (allowDowngrade && networkFailure && url.startsWith('https://')) {
+      return fetchImage(url.replace(/^https:/, 'http:'), timeoutMs, { allowDowngrade: false });
+    }
     return { definitive: false };
   } finally {
     clearTimeout(timer);

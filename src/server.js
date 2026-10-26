@@ -38,6 +38,8 @@ import {
   listPendingEnrichment,
   wipeDatabase,
   cleanDescriptions,
+  bumpCoverEpoch,
+  coverEpoch,
 } from './db.js';
 import { normaliseIsbn } from './isbn.js';
 import { missingVolumes, describeMissing, seriesKey, parseSeries } from './series.js';
@@ -614,8 +616,12 @@ async function serveCover(req, res, isbn13) {
   res.writeHead(200, {
     'content-type': 'image/jpeg',
     'content-length': info.size,
-    // Covers never change for a given ISBN, so a phone can cache them forever.
-    'cache-control': 'public, max-age=31536000, immutable',
+    // A catalogue book's cover is final (and the epoch in the URL covers refetches).
+    // A preview for a book that is not in the library is not: it may vanish with
+    // the next wipe, so it gets a short life instead of a year.
+    'cache-control': row
+      ? 'public, max-age=31536000, immutable'
+      : 'public, max-age=300',
   });
   createReadStream(file).pipe(res);
 }
@@ -661,7 +667,15 @@ const server = http.createServer(async (req, res) => {
       res.setHeader('set-cookie', auth.clearCookie());
       return json(res, 200, { ok: true });
     }
-    if (pathname === '/api/me') return json(res, 200, { authed, version: VERSION, build: BUILD });
+    if (pathname === '/api/me') {
+      return json(res, 200, {
+        authed,
+        version: VERSION,
+        build: BUILD,
+        // Used to build cover URLs: when this changes, the phone refetches them.
+        coverEpoch: coverEpoch(db),
+      });
+    }
 
     // ---- everything else under /api requires a session ----
     if (pathname.startsWith('/api/') && !authed) return json(res, 401, { error: 'auth_required' });
@@ -923,7 +937,9 @@ const server = http.createServer(async (req, res) => {
       rmSync(join(DATA_DIR, 'covers'), { recursive: true, force: true });
       mkdirSync(join(DATA_DIR, 'covers'), { recursive: true });
 
-      console.log('[wipe] database cleared', wiped, 'backup:', basename(backupPath));
+      // The phone caches covers for a year; a new epoch makes those URLs dead.
+      const epoch = bumpCoverEpoch(db);
+      console.log('[wipe] database cleared', wiped, 'covers invalidated (epoch ' + epoch + ')');
       return json(res, 200, { wiped, backup: basename(backupPath) });
     }
 
@@ -974,6 +990,7 @@ const server = http.createServer(async (req, res) => {
       });
       await Promise.all(workers);
 
+      bumpCoverEpoch(db);
       return json(res, 200, {
         checked: batch.length,
         found,

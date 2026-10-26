@@ -391,8 +391,13 @@ function coverHtml(book, fallbackIsbn) {
   if (!isbnValue) return `<div class="cover">no cover</div>`;
   const isbn = esc(isbnValue);
   const bust = encodeURIComponent(state.version || 'dev');
-  return `<div class="cover"><img src="/cover/${isbn}.jpg?b=${bust}" alt="" loading="lazy"
-    onerror="if(this.dataset.retry){this.replaceWith(Object.assign(document.createElement('div'),{className:'cover',textContent:'no cover'}))}else{this.dataset.retry=1;this.src='/cover/${isbn}.jpg?b=${bust}&r='+Date.now()}" /></div>`;
+  // `e` is the server's cover epoch: when it changes (after a wipe, or a bulk
+  // refetch) every cover URL is new, so the phone cannot keep showing pictures of
+  // books that no longer exist.
+  const epoch = state.coverEpoch ?? 0;
+  const src = `/cover/${isbn}.jpg?b=${bust}&e=${epoch}`;
+  return `<div class="cover"><img src="${src}" alt="" loading="lazy"
+    onerror="if(this.dataset.retry){this.replaceWith(Object.assign(document.createElement('div'),{className:'cover',textContent:'no cover'}))}else{this.dataset.retry=1;this.src='${src}&r='+Date.now()}" /></div>`;
 }
 
 /**
@@ -1026,6 +1031,14 @@ $('btn-covers').addEventListener('click', async () => {
       if (result.checked === 0 || result.remaining === 0) break;
     }
     status.textContent = found ? `Added ${found} cover${found === 1 ? '' : 's'}.` : status.textContent;
+    // The server bumped its cover epoch when files changed; adopt the new one, or
+    // the phone's year-long cache would hide the covers just fetched.
+    try {
+      const me = await api('/api/me');
+      state.coverEpoch = me.coverEpoch ?? state.coverEpoch;
+    } catch {
+      /* a manual reload will pick it up */
+    }
     await loadShelf();
   } catch {
     status.textContent = 'Could not reach the cover sources just now — try again later.';
@@ -1204,6 +1217,7 @@ async function init() {
   try {
     const me = await (await fetch('/api/me')).json();
     setVersion(me.version, me.build);
+    state.coverEpoch = me.coverEpoch ?? 0;
     if (me.authed) return boot();
   } catch {
     // fall through to the gate
@@ -1350,6 +1364,14 @@ function wipeThirdStep() {
       });
       closeSheet();
       setResult('');
+      // The wipe bumped the server's cover epoch; adopt it before re-rendering so
+      // the shelf does not ask for the old (cached) cover URLs.
+      try {
+        const me = await api('/api/me');
+        state.coverEpoch = me.coverEpoch ?? state.coverEpoch;
+      } catch {
+        /* the reload below will sort the shelf out either way */
+      }
       await Promise.all([loadShelf(), loadStats(), loadSeries(), loadOwners(), loadRecentScans()]);
       toast(`Catalogue cleared. Backup saved as ${result.backup}`);
     } catch {
