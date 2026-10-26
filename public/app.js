@@ -343,6 +343,7 @@ async function enrichMissing(isbn, token) {
       metaReady: true,
       metaFound: meta.found,
       metaCached: meta.cached,
+      sources: meta.sources ?? {},
     };
     setResult(resultCard(state.lastScan));
   } catch {
@@ -393,6 +394,38 @@ function coverHtml(book, fallbackIsbn) {
  * Web rating and your own, side by side and colour-coded. The web one is only
  * present when a provider had data; yours only exists once you have rated it.
  */
+/**
+ * Which providers were actually consulted, and what they said.
+ *
+ * Without this the app is indistinguishable from one that never tries Google:
+ * "no record" and "never asked" look the same on screen. The flags come from the
+ * server ('ok', 'failed', 'skipped', 'off'), so this is a report of what happened
+ * rather than a guess.
+ */
+function sourcesLine(data) {
+  if (!data?.metaReady) return '';
+  const google = data.sources?.googleBooks;
+  const found = Boolean(data.preview);
+
+  if (found) {
+    const via = [data.preview?.workKey ? 'Open Library' : null, google === 'ok' ? 'Google Books' : null]
+      .filter(Boolean)
+      .join(' + ');
+    return `<div class="sources-line">Found via ${esc(via || 'cached record')}</div>`;
+  }
+
+  if (google === 'off') {
+    return '<div class="sources-line warn">Open Library has no record. No Google Books key is configured, so nothing else was tried.</div>';
+  }
+  if (google === 'failed') {
+    return '<div class="sources-line warn">Open Library has no record, and Google Books refused the request — check the key and its quota.</div>';
+  }
+  if (google === 'ok') {
+    return '<div class="sources-line warn">No record in Open Library or Google Books.</div>';
+  }
+  return '<div class="sources-line warn">Open Library has no record.</div>';
+}
+
 function ratingPills(book) {
   if (!book) return '';
   const pills = [];
@@ -476,6 +509,7 @@ function resultCard(data) {
       </div>
     </div>
     ${ratingPills(book)}
+    ${sourcesLine(data)}
     ${seriesNote(data.series, book?.volume)}
     ${noRecord ? '<p class="book-sub">Open Library has nothing for this ISBN. Add it by hand — title and author are all that is needed.</p>' : ''}
     ${actions}

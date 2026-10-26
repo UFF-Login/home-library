@@ -267,6 +267,10 @@ button:active { transform: scale(0.985); }
   max-width: 90vw; text-align: center;
 }
 
+/* Which providers answered. Quiet by default, amber when something was refused. */
+.sources-line { font-size: 12px; color: var(--muted); margin: 2px 0 8px; }
+.sources-line.warn { color: #d9a441; }
+
 /* ---------- ratings: the web's opinion vs yours, equal weight ---------- */
 .rating-pills { display: flex; gap: 6px; flex-wrap: wrap; }
 .rating-pill {

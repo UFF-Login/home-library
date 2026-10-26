@@ -14,7 +14,9 @@
 // That comes from Wikidata.
 import { fetchJson } from './util.js';
 
-const ENDPOINT = 'https://www.googleapis.com/books/v1/volumes';
+// Overridable only so the rescue path can be exercised end-to-end against a
+// stand-in for Google's API; production never sets this.
+const ENDPOINT = process.env.GOOGLE_BOOKS_ENDPOINT ?? 'https://www.googleapis.com/books/v1/volumes';
 
 export function googleBooksKey() {
   const key = String(process.env.GOOGLE_BOOKS_KEY ?? '').trim();
@@ -41,7 +43,16 @@ function bestCoverUrl(imageLinks = {}) {
     imageLinks.smallThumbnail ??
     null;
   if (!candidate) return null;
-  return String(candidate).replace(/^http:/, 'https:').replace(/&edge=curl/g, '');
+  const upgraded = String(candidate).replace(/^http:/, 'https:');
+  // `edge=curl` may be the first parameter or a later one, so handle it as a real
+  // query parameter rather than by string surgery.
+  try {
+    const url = new URL(upgraded);
+    url.searchParams.delete('edge');
+    return url.toString();
+  } catch {
+    return upgraded.replace(/[?&]edge=curl/g, '');
+  }
 }
 
 /**

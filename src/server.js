@@ -353,7 +353,10 @@ async function metaFor(isbn13) {
             }
           }
         }
-      } else {
+      } else if (sources.googleBooks !== 'ok') {
+        // Nothing left to ask for. Do not overwrite 'ok' here: when the record was
+        // rescued from Google the rating is already present, so this branch runs
+        // even though Google did answer.
         sources.googleBooks = 'skipped';
       }
     }

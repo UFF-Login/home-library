@@ -76,3 +76,27 @@ test('a volume missing optional fields still maps', () => {
 test('no volume at all maps to null rather than an empty record', () => {
   assert.equal(volumeToRecord(undefined, '9780330360890'), null);
 });
+
+test('edge=curl is stripped wherever it sits in the URL', () => {
+  // It is usually a later parameter, but not always - stripping only "&edge=curl"
+  // left the page-curl effect in place when it came first.
+  const first = volumeToRecord(
+    {
+      title: 'X',
+      industryIdentifiers: [{ type: 'ISBN_13', identifier: '9780330360890' }],
+      imageLinks: { thumbnail: 'http://books.google.com/books/content?edge=curl&img=1' },
+    },
+    '9780330360890',
+  );
+  assert.equal(first.coverUrl, 'https://books.google.com/books/content?img=1');
+
+  const later = volumeToRecord(
+    {
+      title: 'X',
+      industryIdentifiers: [{ type: 'ISBN_13', identifier: '9780330360890' }],
+      imageLinks: { thumbnail: 'http://books.google.com/books/content?img=1&edge=curl' },
+    },
+    '9780330360890',
+  );
+  assert.equal(later.coverUrl, 'https://books.google.com/books/content?img=1');
+});
