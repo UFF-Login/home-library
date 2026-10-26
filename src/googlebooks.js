@@ -12,7 +12,35 @@
 //
 // It still does NOT bring series data: the Volume schema has no series field.
 // That comes from Wikidata.
-import { fetchJson } from './util.js';
+/**
+ * Fetch JSON, keeping the body on error responses too.
+ *
+ * The shared helper returns data:null whenever the status is not 2xx, which turns
+ * Google's "Quota exceeded for quota metric 'Queries'..." into a bare HTTP 429 -
+ * exactly the detail needed to tell a quota problem from a restricted key.
+ */
+async function requestJson(url, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { 'user-agent': 'home-library/0.1 (self-hosted book catalogue)' },
+    });
+    const text = await res.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = null;
+    }
+    return { ok: res.ok, status: res.status, data };
+  } catch (error) {
+    return { ok: false, status: 0, data: null, error: String(error?.message ?? error) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // Overridable only so the rescue path can be exercised end-to-end against a
 // stand-in for Google's API; production never sets this.
@@ -87,17 +115,65 @@ export function volumeToRecord(info, isbn13) {
 }
 
 /**
- * Look a volume up by ISBN. Returns null when unconfigured, rate-limited, or the
- * book is unknown - the caller keeps whatever Open Library already gave it.
+ * Look a volume up by ISBN, reporting *why* there is no record.
+ *
+ * "Google had nothing" and "Google refused the request" are completely different
+ * answers - one means the book is unknown, the other means the key or quota is
+ * broken - and reporting them identically sent the operator chasing a key problem
+ * that did not exist.
+ *
+ * status: 'off'    no key configured
+ *         'failed' the request was rejected (HTTP error, quota, bad key)
+ *         'empty'  answered cleanly, but has no matching volume
+ *         'ok'     answered with a record
  */
-export async function googleBooksByIsbn(isbn13, { timeoutMs = 8000 } = {}) {
+export async function googleBooksLookup(isbn13, { timeoutMs = 8000 } = {}) {
   const key = googleBooksKey();
-  if (!key) return null;
+  if (!key) return { status: 'off' };
 
   const url = `${ENDPOINT}?q=isbn:${encodeURIComponent(isbn13)}&key=${encodeURIComponent(key)}`;
-  const res = await fetchJson(url, { timeoutMs });
-  if (!res.ok || !res.data) return null;
+  const res = await requestJson(url, timeoutMs);
 
-  const info = res.data.items?.[0]?.volumeInfo;
-  return volumeToRecord(info, isbn13);
+  if (!res.ok) {
+    return {
+      status: 'failed',
+      httpStatus: res.status,
+      reason: shortReason(res.data?.error?.message ?? res.error ?? `HTTP ${res.status}`),
+    };
+  }
+
+  const record = volumeToRecord(res.data?.items?.[0]?.volumeInfo, isbn13);
+  if (!record) return { status: 'empty' };
+  return { status: 'ok', record };
+}
+
+/** Google's error messages are long; keep the first clause for the phone screen. */
+function shortReason(message) {
+  return String(message).split('.')[0].slice(0, 160);
+}
+
+/**
+ * Raw probe for the "test the key" button: returns Google's own words, unedited,
+ * so a 403 key restriction is distinguishable from a 429 quota from a dead key.
+ */
+export async function googleBooksProbe(isbn13 = '9780330360890', { timeoutMs = 8000 } = {}) {
+  const key = googleBooksKey();
+  if (!key) return { configured: false };
+
+  const url = `${ENDPOINT}?q=isbn:${encodeURIComponent(isbn13)}&key=${encodeURIComponent(key)}`;
+  const res = await requestJson(url, timeoutMs);
+  return {
+    configured: true,
+    httpStatus: res.status,
+    ok: res.ok,
+    items: res.data?.totalItems ?? null,
+    sampleTitle: res.data?.items?.[0]?.volumeInfo?.title ?? null,
+    error: res.data?.error ?? res.error ?? null,
+  };
+}
+
+/** Record or null, for callers that do not care why. */
+export async function googleBooksByIsbn(isbn13, options) {
+  const result = await googleBooksLookup(isbn13, options);
+  return result.status === 'ok' ? result.record : null;
 }

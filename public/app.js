@@ -422,9 +422,12 @@ function sourcesLine(data) {
     return '<div class="sources-line warn">Open Library has no record. No Google Books key is configured, so nothing else was tried.</div>';
   }
   if (google === 'failed') {
-    return '<div class="sources-line warn">Open Library has no record, and Google Books refused the request — check the key and its quota.</div>';
+    // The reason comes from Google itself, so a key restriction is not mistaken
+    // for a quota problem.
+    const why = data.sources?.googleReason ? `: ${data.sources.googleReason}` : '';
+    return `<div class="sources-line warn">Open Library has no record, and Google Books would not answer${esc(why)}</div>`;
   }
-  if (google === 'ok') {
+  if (google === 'ok' || google === 'empty') {
     return '<div class="sources-line warn">No record in Open Library or Google Books.</div>';
   }
   return '<div class="sources-line warn">Open Library has no record.</div>';
@@ -1241,5 +1244,29 @@ $('owner-list').addEventListener('click', async (event) => {
     }
   } catch {
     $('owner-status').textContent = 'Could not update the owner list.';
+  }
+});
+
+
+// "Test Google Books key": prints Google's own answer, so a restricted key (403)
+// is never confused with an exhausted quota (429) or a dead key (400).
+$('btn-test-google').addEventListener('click', async () => {
+  const out = $('google-test');
+  out.textContent = 'Asking Google…';
+  try {
+    const probe = await api('/api/diagnostics/google');
+    if (!probe.configured) {
+      out.textContent = 'No Google Books key reached the container.';
+    } else if (probe.ok) {
+      out.textContent = `Working: ${probe.items} result(s) for the test ISBN${
+        probe.sampleTitle ? `, e.g. "${probe.sampleTitle}"` : ''
+      }.`;
+    } else {
+      out.textContent = `Google answered HTTP ${probe.httpStatus}${
+        probe.error?.message ? ` — ${probe.error.message}` : ''
+      }`;
+    }
+  } catch {
+    out.textContent = 'Could not reach the diagnostic endpoint.';
   }
 });

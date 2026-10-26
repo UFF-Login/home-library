@@ -38,7 +38,7 @@ import {
 import { normaliseIsbn } from './isbn.js';
 import { missingVolumes, describeMissing, seriesKey, parseSeries } from './series.js';
 import { seriesFromWikidata } from './wikidata.js';
-import { googleBooksByIsbn, googleBooksKey } from './googlebooks.js';
+import { googleBooksLookup, googleBooksProbe, googleBooksKey } from './googlebooks.js';
 import { authorKey } from './authors.js';
 import { lookupIsbn, fetchRating } from './lookup.js';
 import { ensurePin, createAuth, parseCookies } from './auth.js';
@@ -348,7 +348,7 @@ async function metaFor(isbn13, { force = false } = {}) {
   const sources = {
     ...(cached?.sources ?? {}),
     // Keep 'ok'/'failed'; reset only the never-attempted case so it is retried.
-    googleBooks: ['ok', 'failed', 'skipped'].includes(cached?.sources?.googleBooks)
+    googleBooks: ['ok', 'failed', 'skipped', 'empty'].includes(cached?.sources?.googleBooks)
       ? cached.sources.googleBooks
       : 'off',
   };
@@ -357,11 +357,12 @@ async function metaFor(isbn13, { force = false } = {}) {
   // BEFORE the enrichment branch, because that branch only runs when a record
   // already exists - which is why unknown ISBNs never reached Google at all.
   if (!result.found && googleAvailable) {
-    const gb = await googleBooksByIsbn(isbn13).catch(() => null);
-    sources.googleBooks = gb ? 'ok' : 'failed';
-    if (gb) {
+    const looked = await googleBooksLookup(isbn13).catch(() => ({ status: 'failed' }));
+    sources.googleBooks = looked.status;
+    if (looked.status === 'failed' && looked.reason) sources.googleReason = looked.reason;
+    if (looked.status === 'ok') {
       result.found = true;
-      result.work = workFromGoogle(gb, isbn13);
+      result.work = workFromGoogle(looked.record, isbn13);
     }
   }
 
@@ -385,10 +386,12 @@ async function metaFor(isbn13, { force = false } = {}) {
       const wantsRating = work.rating == null;
       const wantsDescription = !work.description;
       if (wantsRating || wantsDescription) {
-        const gb = await googleBooksByIsbn(isbn13).catch(() => null);
+        const looked = await googleBooksLookup(isbn13).catch(() => ({ status: 'failed' }));
         // Record the attempt either way: a broken key must not mean an API call on
         // every scan forever.
-        sources.googleBooks = gb ? 'ok' : 'failed';
+        sources.googleBooks = looked.status;
+        if (looked.status === 'failed' && looked.reason) sources.googleReason = looked.reason;
+        const gb = looked.status === 'ok' ? looked.record : null;
         if (gb) {
           if (
             gb.rating != null &&
@@ -829,6 +832,16 @@ const server = http.createServer(async (req, res) => {
         deleteOwner(db, id);
         return json(res, 200, { owners: listOwners(db), defaultOwner: defaultOwnerName(db) });
       }
+    }
+
+    /**
+     * "Is my Google key actually working?" - answered with Google's own words.
+     * A 403 (key restricted to referrers) looks nothing like a 429 (quota) or a
+     * 400 (dead key), and guessing between them wastes the operator's evening.
+     */
+    if (pathname === '/api/diagnostics/google' && method === 'GET') {
+      const probe = await googleBooksProbe();
+      return json(res, 200, probe);
     }
 
     if (pathname === '/api/stats' && method === 'GET') return json(res, 200, stats(db));
