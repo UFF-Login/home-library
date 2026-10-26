@@ -622,3 +622,41 @@ export function listPendingEnrichment(db) {
     .all()
     .map((row) => row.isbn13);
 }
+
+/**
+ * Delete every book, work, scan record, cached lookup and owner.
+ *
+ * Deliberately blunt: this exists so a fresh start can be tested honestly, not to
+ * offer partial "tidying". The caller is expected to have written a backup first
+ * and to have obtained an explicit human confirmation.
+ */
+export function wipeDatabase(db) {
+  const count = (table) => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
+  const before = {
+    books: count('books'),
+    works: count('works'),
+    scans: count('scans'),
+    lookups: count('lookup_cache'),
+    owners: count('owners'),
+  };
+
+  db.exec('BEGIN');
+  try {
+    db.exec('DELETE FROM books');
+    db.exec('DELETE FROM works');
+    db.exec('DELETE FROM scans');
+    db.exec('DELETE FROM lookup_cache');
+    db.exec('DELETE FROM owners');
+    // A library always has someone to attribute a book to; leaving the list empty
+    // would make the next add fail for a reason nobody could see.
+    db.prepare('INSERT INTO owners (name, is_default, created_at) VALUES (?, 1, ?)').run(
+      'Me',
+      new Date().toISOString(),
+    );
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  return before;
+}

@@ -133,6 +133,11 @@
           <button id="btn-rebuild" class="ghost">Rebuild book data</button>
           <p class="hint" style="margin:0">Forgets cached lookups and "no cover" results so the next scan fetches everything fresh. Your books, ratings and notes are not touched. Use after adding an API key.</p>
         </div>
+        <div class="panel danger-zone">
+          <h2>Danger zone</h2>
+          <p class="hint">Delete the entire catalogue and start again — every book, rating, note, series entry and cover. A backup file is written to the server before anything is removed, and you will be asked three times.</p>
+          <button id="btn-wipe" class="danger">Delete everything…</button>
+        </div>
         <div class="panel">
           <h2>Recent scans</h2>
           <div id="recent-scans" class="recent"></div>

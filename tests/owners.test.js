@@ -16,6 +16,9 @@ import {
   renameOwner,
   deleteOwner,
   defaultOwnerName,
+  wipeDatabase,
+  listBooks,
+  stats,
 } from '../src/db.js';
 
 const work = (title) => ({ title, authors: ['Someone'], authorKey: 'someone:s' });
@@ -88,4 +91,28 @@ test('a placeholder record is filled in by a later save, not left blank', () => 
   const filled = findBook(db, '9780330360890');
   assert.equal(filled.title, 'Ice Station');
   assert.equal(filled.owner, 'Me', 'enrichment must not disturb ownership');
+});
+
+test('wiping removes everything and leaves a usable owner list', () => {
+  const db = openDb(':memory:');
+  addOwner(db, 'Sarah');
+  saveBook(db, { isbn13: '9780330360890', work: work('Ice Station') });
+  saveBook(db, { isbn13: '9780441172719', work: work('Dune'), state: 'wishlist' });
+
+  const wiped = wipeDatabase(db);
+  assert.equal(wiped.books, 2);
+  assert.equal(wiped.works, 2);
+
+  assert.equal(listBooks(db, {}).length, 0, 'no books remain');
+  assert.equal(stats(db).owned, 0);
+  // 'Me' is recreated: an empty owner list would make the next add fail silently.
+  assert.deepEqual(
+    listOwners(db).map((o) => o.name),
+    ['Me'],
+  );
+  assert.equal(defaultOwnerName(db), 'Me');
+
+  // And the catalogue is usable immediately afterwards.
+  const fresh = saveBook(db, { isbn13: '9780590453660', work: work('Stay Out of the Basement') });
+  assert.equal(fresh.owner, 'Me');
 });

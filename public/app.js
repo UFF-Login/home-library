@@ -1283,3 +1283,81 @@ $('btn-test-google').addEventListener('click', async () => {
     out.textContent = 'Could not reach the diagnostic endpoint.';
   }
 });
+
+
+/**
+ * Delete everything - in three deliberate steps.
+ *
+ * This is the only action in the app that cannot be undone by tapping again, so it
+ * is never a single button: a warning, a summary with a backup link, then a typed
+ * word. The server also refuses the request unless it carries the confirmation
+ * string, and writes a backup before deleting.
+ */
+function startWipe() {
+  openSheet(`
+    <h2>Step 1 of 3 — delete everything?</h2>
+    <p class="hint">This removes every book, rating, note, series entry, scan history and cover image from the server. Nothing in the app can undo it.</p>
+    <p class="hint">You will be asked twice more, and a backup is saved on the server first.</p>
+    <div class="btn-row">
+      <button class="ghost" id="wipe-cancel1">Cancel</button>
+      <button class="danger" id="wipe-step1">Yes, continue</button>
+    </div>
+  `);
+  $('wipe-cancel1').addEventListener('click', closeSheet);
+  $('wipe-step1').addEventListener('click', wipeSecondStep);
+}
+
+function wipeSecondStep() {
+  const owned = state.stats?.owned ?? 0;
+  const wished = state.stats?.wishlist ?? 0;
+  openSheet(`
+    <h2>Step 2 of 3 — this is what goes</h2>
+    <p class="hint">${esc(owned)} owned and ${esc(wished)} wishlisted book(s), with their ratings, notes, loans and covers.</p>
+    <p class="hint">A backup is written on the server automatically. You can also take one now and keep it.</p>
+    <div class="btn-row">
+      <button class="ghost" id="wipe-cancel2">Cancel</button>
+      <a class="button ghost" href="/api/export" download>Download backup</a>
+      <button class="danger" id="wipe-step2">Continue</button>
+    </div>
+  `);
+  $('wipe-cancel2').addEventListener('click', closeSheet);
+  $('wipe-step2').addEventListener('click', wipeThirdStep);
+}
+
+function wipeThirdStep() {
+  openSheet(`
+    <h2>Step 3 of 3 — confirm</h2>
+    <p class="hint">Type <b>DELETE</b> below. The button stays disabled until it matches exactly.</p>
+    <div class="field"><input id="wipe-word" autocomplete="off" autocapitalize="characters" placeholder="DELETE" /></div>
+    <div class="btn-row">
+      <button class="ghost" id="wipe-cancel3">Cancel</button>
+      <button class="danger" id="wipe-go" disabled>Delete everything</button>
+    </div>
+  `);
+  $('wipe-cancel3').addEventListener('click', closeSheet);
+  $('wipe-word').addEventListener('input', (event) => {
+    $('wipe-go').disabled = event.target.value.trim() !== 'DELETE';
+  });
+  $('wipe-word').focus();
+  $('wipe-go').addEventListener('click', async () => {
+    const button = $('wipe-go');
+    button.disabled = true;
+    button.textContent = 'Deleting…';
+    try {
+      const result = await api('/api/admin/wipe', {
+        method: 'POST',
+        body: { confirm: 'DELETE_ALL' },
+      });
+      closeSheet();
+      setResult('');
+      await Promise.all([loadShelf(), loadStats(), loadSeries(), loadOwners(), loadRecentScans()]);
+      toast(`Catalogue cleared. Backup saved as ${result.backup}`);
+    } catch {
+      button.disabled = false;
+      button.textContent = 'Delete everything';
+      toast('Could not clear the catalogue');
+    }
+  });
+}
+
+$('btn-wipe').addEventListener('click', startWipe);

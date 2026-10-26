@@ -7,9 +7,9 @@
 //    shop with bad signal must not leave the UI hanging;
 //  - the frontend is served from here, so the container is the whole app.
 import http from 'node:http';
-import { createReadStream, existsSync, mkdirSync, accessSync, readFileSync, constants as fsConstants } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, accessSync, readFileSync, writeFileSync, rmSync, constants as fsConstants } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
-import { join, extname, resolve, normalize } from 'node:path';
+import { join, extname, resolve, normalize, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -36,6 +36,7 @@ import {
   deleteOwner,
   defaultOwnerName,
   listPendingEnrichment,
+  wipeDatabase,
 } from './db.js';
 import { normaliseIsbn } from './isbn.js';
 import { missingVolumes, describeMissing, seriesKey, parseSeries } from './series.js';
@@ -857,6 +858,30 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/diagnostics/google' && method === 'GET') {
       const probe = await googleBooksProbe();
       return json(res, 200, probe);
+    }
+
+    /**
+     * Delete everything. Guarded by an explicit confirmation string AND a backup
+     * written first: this is the one endpoint where a mistake is unrecoverable,
+     * so it must be impossible to trigger by a stray tap or a refresh.
+     */
+    if (pathname === '/api/admin/wipe' && method === 'POST') {
+      const body = await readBody(req);
+      if (body?.confirm !== 'DELETE_ALL') return json(res, 400, { error: 'confirm_required' });
+
+      const backupDir = join(DATA_DIR, 'backups');
+      mkdirSync(backupDir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = join(backupDir, `pre-wipe-${stamp}.json`);
+      writeFileSync(backupPath, JSON.stringify(exportAll(db), null, 2));
+
+      const wiped = wipeDatabase(db);
+      // Covers are derived data belonging to books that no longer exist.
+      rmSync(join(DATA_DIR, 'covers'), { recursive: true, force: true });
+      mkdirSync(join(DATA_DIR, 'covers'), { recursive: true });
+
+      console.log('[wipe] database cleared', wiped, 'backup:', basename(backupPath));
+      return json(res, 200, { wiped, backup: basename(backupPath) });
     }
 
     if (pathname === '/api/stats' && method === 'GET') return json(res, 200, stats(db));
