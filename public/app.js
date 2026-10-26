@@ -347,6 +347,7 @@ async function enrichMissing(isbn, token) {
       metaReady: true,
       metaFound: meta.found,
       metaCached: meta.cached,
+      lookupMs: meta.lookupMs ?? null,
       sources: meta.sources ?? {},
     };
     setResult(resultCard(state.lastScan));
@@ -488,7 +489,13 @@ function resultCard(data) {
     book?.published,
     // Community rating, when Open Library has one for the work.
     book?.rating ? `★ ${book.rating}${book.ratingsCount ? ` (${book.ratingsCount})` : ''}` : null,
-    awaitingMeta ? 'looking up details…' : `${data.elapsedMs ?? 0} ms`,
+    awaitingMeta
+      ? 'looking up details…'
+      : data.lookupMs
+        ? // The verdict is local and instant; the details are the slow part, and
+          // showing only '13 ms' while the phone waits 40 seconds is a lie.
+          `details took ${(data.lookupMs / 1000).toFixed(1)} s`
+        : `checked in ${data.elapsedMs ?? 0} ms`,
   ].filter(Boolean);
 
   /**

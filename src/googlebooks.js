@@ -136,7 +136,12 @@ export function parseViewApi(text, key) {
   if (!entry) return null;
   const id = /[?&]id=([A-Za-z0-9_-]+)/.exec(entry.info_url ?? '')?.[1] ?? null;
   if (!id) return null;
-  return { volumeId: id, thumbnailUrl: entry.thumbnail_url ?? null, preview: entry.preview ?? null };
+  // viewapi offers zoom=5 (a small thumbnail); zoom=1 is the largest image the
+  // content endpoint provides, and the size check downstream rejects tiny ones.
+  const thumbnailUrl = entry.thumbnail_url
+    ? String(entry.thumbnail_url).replace(/zoom=\d+/, 'zoom=1')
+    : null;
+  return { volumeId: id, thumbnailUrl, preview: entry.preview ?? null };
 }
 
 /**
@@ -193,43 +198,46 @@ async function volumeById(volumeId, isbn13, { timeoutMs = 8000, trusted = false 
  */
 export async function googleBooksLookup(isbn13, { timeoutMs = 8000 } = {}) {
   const key = googleBooksKey();
+  if (!key) return { status: 'off' };
+
   let failure = null;
 
-  if (key) {
-    for (const query of searchQueries(isbn13)) {
-      const url = `${ENDPOINT}?q=${encodeURIComponent(query)}&key=${encodeURIComponent(key)}`;
-      const res = await requestJson(url, timeoutMs);
-      if (!res.ok) {
-        failure = {
-          httpStatus: res.status,
-          reason: shortReason(res.data?.error?.message ?? res.error ?? `HTTP ${res.status}`),
-        };
-        break; // a rejected request will be rejected for every query
-      }
-      const record = volumeToRecord(res.data?.items?.[0]?.volumeInfo, isbn13);
-      if (record) return { status: 'ok', record };
+  // Resolve the volume first and read it by id: two requests, and it works for the
+  // metadata-only volumes that search cannot see at all.
+  const view = await viewApiLookup(isbn13, { timeoutMs });
+  if (view) {
+    const byId = await volumeById(view.volumeId, isbn13, { timeoutMs, trusted: true });
+    if (byId?.record) {
+      return {
+        status: 'ok',
+        record: { ...byId.record, coverUrl: byId.record.coverUrl ?? view.thumbnailUrl },
+      };
+    }
+    if (byId?.error) {
+      failure = {
+        httpStatus: byId.error.status,
+        reason: shortReason(byId.error.data?.error?.message ?? `HTTP ${byId.error.status}`),
+      };
     }
   }
 
-  // The search blind spot: resolve the volume id first, then read it directly.
-  const view = await viewApiLookup(isbn13, { timeoutMs });
-  if (view) {
-    if (key) {
-      const byId = await volumeById(view.volumeId, isbn13, { timeoutMs, trusted: true });
-      if (byId?.record) {
-        return {
-          status: 'ok',
-          record: { ...byId.record, coverUrl: byId.record.coverUrl ?? view.thumbnailUrl },
-        };
-      }
-      if (byId?.error) {
-        failure = {
-          httpStatus: byId.error.status,
-          reason: shortReason(byId.error.data?.error?.message ?? `HTTP ${byId.error.status}`),
-        };
-      }
+  // Search as the fallback, for anything viewapi does not resolve.
+  for (const query of searchQueries(isbn13)) {
+    const url = `${ENDPOINT}?q=${encodeURIComponent(query)}&key=${encodeURIComponent(key)}`;
+    const res = await requestJson(url, timeoutMs);
+    if (!res.ok) {
+      failure ??= {
+        httpStatus: res.status,
+        reason: shortReason(res.data?.error?.message ?? res.error ?? `HTTP ${res.status}`),
+      };
+      break; // a rejected request will be rejected for every query
     }
-    // Google has the book even if we cannot read its details.
+    const record = volumeToRecord(res.data?.items?.[0]?.volumeInfo, isbn13);
+    if (record) return { status: 'ok', record };
+  }
+
+  if (view) {
+    // Google has the book even though its details could not be read.
     return {
       status: 'partial',
       volumeId: view.volumeId,

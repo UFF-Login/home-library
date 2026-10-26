@@ -24,6 +24,11 @@ import { join } from 'node:path';
 import { isbn13To10 } from './isbn.js';
 import { verifiedSearchDoc } from './openlibrary.js';
 
+// Bump when the fetching rules change: stored "no cover" markers are cleared on
+// upgrade, because a marker written by a buggy rule would otherwise hide a cover
+// for a month.
+export const COVER_PIPELINE_VERSION = 2;
+
 const MIN_COVER_BYTES = 1500;
 const NEGATIVE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // re-check a "no cover" monthly
 const ATTEMPTS_PER_URL = 2;
@@ -65,7 +70,12 @@ async function fetchImage(url, timeoutMs) {
     const res = await fetch(url, {
       signal: controller.signal,
       redirect: 'follow',
-      headers: { 'user-agent': 'home-library/0.1 (self-hosted book catalogue)' },
+      // Browser-shaped: books.google.com serves 0 bytes to unknown clients.
+      headers: {
+        'user-agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36',
+        accept: 'image/avif,image/webp,image/jpeg,image/png,*/*;q=0.8',
+      },
     });
     if (res.status === 404 || res.status === 410) return { definitive: true };
     if (!res.ok) return { definitive: false };
@@ -73,6 +83,10 @@ async function fetchImage(url, timeoutMs) {
     const type = res.headers.get('content-type') ?? '';
     const buf = Buffer.from(await res.arrayBuffer());
     if (!type.startsWith('image/')) return { definitive: true }; // HTML error page
+    // Google (and Cloudflare-ish hosts) answer 200 with an empty body when they
+    // throttle a client. Treating that as "this book has no cover" wrote a 30-day
+    // marker and left the book permanently coverless.
+    if (buf.length === 0) return { definitive: false };
     if (buf.length < MIN_COVER_BYTES) return { definitive: true };
     return { bytes: buf };
   } catch {

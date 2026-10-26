@@ -27,6 +27,8 @@ import {
   getLookupCache,
   setLookupCache,
   clearLookupCache,
+  getMeta,
+  setMeta,
   listOwners,
   addOwner,
   setDefaultOwner,
@@ -42,7 +44,7 @@ import { googleBooksLookup, googleBooksProbe, googleBooksKey } from './googleboo
 import { authorKey } from './authors.js';
 import { lookupIsbn, fetchRating } from './lookup.js';
 import { ensurePin, createAuth, parseCookies } from './auth.js';
-import { ensureCover, coverFile, hasCover, coverMissPending, clearCoverMiss, clearAllCoverMisses } from './covers.js';
+import { ensureCover, coverFile, hasCover, coverMissPending, clearCoverMiss, clearAllCoverMisses, COVER_PIPELINE_VERSION } from './covers.js';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(HERE, '..', 'public');
@@ -138,6 +140,18 @@ function assertDataDirWritable(dir) {
 assertDataDirWritable(DATA_DIR);
 
 const db = openDb(join(DATA_DIR, 'bookshelf.db'));
+
+// "No cover" markers are cached for 30 days. When the way covers are fetched
+// changes, every marker written by the old rules is suspect - a throttled host
+// answering 200 with an empty body used to look like "this book has no cover".
+{
+  const pipeline = String(COVER_PIPELINE_VERSION);
+  if (getMeta(db, 'coverPipelineVersion') !== pipeline) {
+    const cleared = clearAllCoverMisses(DATA_DIR);
+    setMeta(db, 'coverPipelineVersion', pipeline);
+    if (cleared) console.log(`[covers] cleared ${cleared} stale "no cover" marker(s)`);
+  }
+}
 const { generated } = ensurePin(db);
 const auth = createAuth(db);
 
@@ -322,6 +336,7 @@ function scheduleBackgroundEnrich(isbn13) {
 }
 
 async function metaFor(isbn13, { force = false } = {}) {
+  const started = Date.now();
   const cached = getLookupCache(db, isbn13);
   const googleAvailable = Boolean(googleBooksKey());
 
@@ -339,38 +354,46 @@ async function metaFor(isbn13, { force = false } = {}) {
 
   if (cached && !stale && !force) return { ...cached, cached: true };
 
-  // Rebuild on top of what we already knew, so a refresh cannot lose data that
-  // Open Library gave us the first time (its responses are not always stable).
-  const result = cached?.work
-    ? { found: true, work: { ...cached.work }, isbn13 }
-    : await lookupIsbn(isbn13).catch(() => ({ found: false, work: null, isbn13 }));
+  /**
+   * Open Library and Google are asked at the same time, not one after the other.
+   * A scan used to wait for Open Library to fail before Google was even contacted,
+   * which is where the "40 seconds for one book" came from. Both answers are used
+   * either way - Open Library for the record, Google for the rating and blurb.
+   */
+  const olPromise = cached?.work
+    ? Promise.resolve({ found: true, work: { ...cached.work }, isbn13 })
+    : lookupIsbn(isbn13).catch(() => ({ found: false, work: null, isbn13 }));
+  const gbPromise = googleAvailable
+    ? googleBooksLookup(isbn13).catch(() => ({ status: 'failed' }))
+    : null;
+
+  const result = await olPromise;
 
   const sources = {
     ...(cached?.sources ?? {}),
-    // Keep 'ok'/'failed'; reset only the never-attempted case so it is retried.
+    // Keep settled states; reset only the never-attempted case so it is retried.
     googleBooks: ['ok', 'failed', 'skipped', 'empty', 'partial'].includes(cached?.sources?.googleBooks)
       ? cached.sources.googleBooks
       : 'off',
   };
 
-  // Nothing in Open Library: ask Google to build the record. This must happen
-  // BEFORE the enrichment branch, because that branch only runs when a record
-  // already exists - which is why unknown ISBNs never reached Google at all.
-  if (!result.found && googleAvailable) {
-    const looked = await googleBooksLookup(isbn13).catch(() => ({ status: 'failed' }));
+  const looked = gbPromise ? await gbPromise : null;
+  if (looked) {
     sources.googleBooks = looked.status;
     if (looked.reason) sources.googleReason = looked.reason;
     if (looked.status === 'partial' && looked.volumeId) sources.googleVolumeId = looked.volumeId;
-    if (looked.status === 'ok') {
-      result.found = true;
-      result.work = workFromGoogle(looked.record, isbn13);
-    }
+  }
+
+  // Nothing in Open Library: Google's record becomes the record.
+  if (!result.found && looked?.status === 'ok') {
+    result.found = true;
+    result.work = workFromGoogle(looked.record, isbn13);
   }
 
   if (result.found && result.work) {
     const work = result.work;
 
-    // Open Library's community rating first: free, no key, no quota.
+    // Open Library's community rating, when the work is known there.
     if (work.workKey && work.rating == null) {
       const rating = await fetchRating(work.workKey).catch(() => null);
       if (rating) {
@@ -379,48 +402,28 @@ async function metaFor(isbn13, { force = false } = {}) {
       }
     }
 
-    // Google Books, when a key is configured. It is consulted for a description
-    // even when Open Library already had a rating - and its rating wins when it
-    // has substantially more votes, which is usually the case (Open Library
-    // often has one or two, Google has thousands).
-    if (googleAvailable) {
-      const wantsRating = work.rating == null;
-      const wantsDescription = !work.description;
-      if (wantsRating || wantsDescription) {
-        const looked = await googleBooksLookup(isbn13).catch(() => ({ status: 'failed' }));
-        // Record the attempt either way: a broken key must not mean an API call on
-        // every scan forever.
-        sources.googleBooks = looked.status;
-        if (looked.status === 'failed' && looked.reason) sources.googleReason = looked.reason;
-        const gb = looked.status === 'ok' ? looked.record : null;
-        if (gb) {
-          if (
-            gb.rating != null &&
-            (work.rating == null || (gb.ratingsCount ?? 0) > (work.ratingsCount ?? 0))
-          ) {
-            work.rating = gb.rating;
-            work.ratingsCount = gb.ratingsCount;
-          }
-          work.description ??= gb.description;
-          if (!work.pages && gb.pages) work.pages = gb.pages;
-          // Google's title text sometimes carries a series marker ours can parse.
-          if (!work.series) {
-            const parsed = parseSeries({
-              title: gb.title ?? work.title,
-              subtitle: gb.subtitle ?? work.subtitle,
-            });
-            if (parsed.series) {
-              work.series = parsed.series;
-              work.seriesKey = seriesKey(parsed.series);
-              work.volume = parsed.volume ?? work.volume;
-            }
-          }
+    // Google's rating and blurb. Its rating wins when it has more votes, which is
+    // usually the case (Open Library often has one or two, Google has thousands).
+    const gb = looked?.status === 'ok' ? looked.record : null;
+    if (gb) {
+      if (gb.rating != null && (work.rating == null || (gb.ratingsCount ?? 0) > (work.ratingsCount ?? 0))) {
+        work.rating = gb.rating;
+        work.ratingsCount = gb.ratingsCount;
+      }
+      work.description ??= gb.description;
+      if (!work.pages && gb.pages) work.pages = gb.pages;
+      if (!work.coverUrl && gb.coverUrl) work.coverUrl = gb.coverUrl;
+      // Google's title text sometimes carries a series marker ours can parse.
+      if (!work.series) {
+        const parsed = parseSeries({
+          title: gb.title ?? work.title,
+          subtitle: gb.subtitle ?? work.subtitle,
+        });
+        if (parsed.series) {
+          work.series = parsed.series;
+          work.seriesKey = seriesKey(parsed.series);
+          work.volume = parsed.volume ?? work.volume;
         }
-      } else if (sources.googleBooks !== 'ok') {
-        // Nothing left to ask for. Do not overwrite 'ok' here: when the record was
-        // rescued from Google the rating is already present, so this branch runs
-        // even though Google did answer.
-        sources.googleBooks = 'skipped';
       }
     }
 
@@ -442,7 +445,9 @@ async function metaFor(isbn13, { force = false } = {}) {
   if (googleAvailable && sources.googleBooks === 'off') sources.googleBooks = 'skipped';
 
   setLookupCache(db, isbn13, { ...result, sources });
-  return { ...result, sources, cached: false };
+  // Reported so the phone can show how long the details took, rather than only
+  // the millisecond verdict time.
+  return { ...result, sources, cached: false, lookupMs: Date.now() - started };
 }
 
 /** Attach the gap maths to a series object for the UI. */
@@ -647,6 +652,7 @@ const server = http.createServer(async (req, res) => {
         // Which enrichment providers have answered for this ISBN: 'ok', 'failed'
         // (tried, nothing) or 'off' (no key configured).
         sources: meta.sources ?? {},
+        lookupMs: meta.lookupMs ?? null,
       });
     }
 
