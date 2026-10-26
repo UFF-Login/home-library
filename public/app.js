@@ -26,6 +26,8 @@ const state = {
   // opened, and an undefined list was crashing the sheet open.
   owners: [],
   defaultOwner: null,
+  // Series are filtered in the browser: the whole list is already loaded.
+  seriesQuery: '',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -835,6 +837,12 @@ $('shelf-grid').addEventListener('click', (event) => {
 });
 
 let searchTimer = null;
+$('series-search').addEventListener('input', (event) => {
+  state.seriesQuery = event.target.value;
+  // Client-side: the whole series list is already in memory, so this is immediate.
+  renderSeries();
+});
+
 $('search').addEventListener('input', (event) => {
   state.query = event.target.value.trim();
   clearTimeout(searchTimer);
@@ -861,7 +869,12 @@ async function loadSeries() {
 
 function renderSeries() {
   const list = $('series-list');
-  const withVolumes = state.series.filter((s) => s.ownedCount > 0);
+  const query = (state.seriesQuery ?? '').trim().toLowerCase();
+  const withVolumes = state.series
+    .filter((s) => s.ownedCount > 0)
+    // Matching is on the series name only: that is what the page lists, and it
+    // keeps the filter predictable while typing.
+    .filter((s) => !query || s.name.toLowerCase().includes(query));
 
   list.innerHTML = withVolumes
     .map((series) => {
@@ -887,6 +900,10 @@ function renderSeries() {
     .join('');
 
   $('series-empty').hidden = withVolumes.length > 0;
+  // Say which emptiness this is: nothing detected, or nothing matching the search.
+  $('series-empty').textContent = query
+    ? `No series match “${(state.seriesQuery ?? '').trim()}”.`
+    : 'No series detected yet.';
 }
 
 // ---------------------------------------------------------------- more
