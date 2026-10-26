@@ -535,3 +535,13 @@ button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
   padding: 2px 4px; text-decoration: underline; white-space: nowrap;
 }
 .more-add:disabled { color: var(--muted); text-decoration: none; }
+
+/* series link inside the book sheet */
+.series-link {
+  background: none; border: 0; padding: 2px 0; margin: 0 0 8px;
+  color: var(--accent); font: inherit; font-size: 13px; cursor: pointer;
+  text-align: left; text-decoration: underline; text-underline-offset: 2px;
+}
+/* the scan card's book row is clickable once the book exists */
+.book-row[role="button"] { cursor: pointer; }
+.book-row[role="button"]:hover .book-title { text-decoration: underline; }

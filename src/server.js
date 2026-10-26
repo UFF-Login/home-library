@@ -967,10 +967,21 @@ const server = http.createServer(async (req, res) => {
       // The key carries a version: answers cached by an older, narrower lookup must
       // not outlive the fix that widened it.
       const cacheKey = `v3:${seriesKeyValue}`;
+      // Every route that was tried, and what it said. Without this a failure is
+      // indistinguishable from an empty answer, which is exactly what made "no
+      // record" impossible to act on.
+      const tried = [];
       let cached = getSeriesCache(db, cacheKey);
       if (!cached) {
         const workKey = summary.items.find((item) => item.workKey)?.workKey ?? null;
         const fromWiki = await seriesVolumes(workKey, summary.name).catch(() => null);
+        tried.push({
+          source: 'wikidata',
+          workKey: workKey ?? null,
+          ok: Boolean(fromWiki),
+          volumes: fromWiki?.volumes?.length ?? 0,
+          matchedBy: fromWiki?.matchedBy ?? null,
+        });
         cached = fromWiki ?? { seriesQid: null, volumes: [] };
 
         /**
@@ -984,9 +995,20 @@ const server = http.createServer(async (req, res) => {
          */
         if (!(cached.volumes?.length)) {
           const author = summary.items.find((item) => item.authors?.length)?.authors?.[0];
-          if (author) {
+          if (!author) tried.push({ source: 'google', ok: false, reason: 'no author on the books in this series' });
+          else if (!googleBooksKey()) {
+            // Distinguish "no key" from "key rejected": they need different fixes.
+            tried.push({ source: 'google', ok: false, reason: 'no Google Books key configured' });
+          } else if (author) {
             // Google expects inauthor:"Name" - the quotes are part of the query.
-            const found = await googleBooksSearch(`inauthor:"${author}"`).catch(() => null);
+            const query = `inauthor:"${author}"`;
+            const found = await googleBooksSearch(query).catch(() => null);
+            tried.push({
+              source: 'google',
+              query,
+              ok: Boolean(found),
+              results: found?.length ?? 0,
+            });
             const name = normaliseTitle(summary.name);
             const volumes = [];
             const seenTitles = new Set();
@@ -1005,6 +1027,10 @@ const server = http.createServer(async (req, res) => {
             }
             if (volumes.length) {
               cached = { seriesQid: cached.seriesQid ?? null, matchedBy: 'google', volumes };
+            } else if (found?.length) {
+              // The author has books, but none of their titles contain the series
+              // name - so this series cannot be inferred this way.
+              tried[tried.length - 1].reason = 'titles did not contain the series name';
             }
           }
         }
@@ -1039,6 +1065,9 @@ const server = http.createServer(async (req, res) => {
         matchedBy: cached.matchedBy ?? null,
         total: (cached.volumes ?? []).length,
         missing,
+        series: summary.name,
+        // What was attempted, for when the answer is "nothing".
+        tried,
       });
     }
 

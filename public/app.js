@@ -525,7 +525,13 @@ function resultCard(data) {
 
   return `<div class="card v-${esc(verdict)}">
     <div class="verdict"><span class="dot"></span>${esc(VERDICT_TEXT[verdict] ?? verdict)}</div>
-    <div class="book-row">
+    <div class="book-row"${
+      // Once the book is in the library, the card itself is the way into it: tap to
+      // open the detail sheet and edit anything.
+      isOwned || isWished
+        ? ` data-act="detail" data-isbn="${esc(data.isbn13)}" role="button" tabindex="0" title="Open this book"`
+        : ''
+    }>
       ${coverHtml(book, data.isbn13)}
       <div class="book-meta">
         <div class="book-title">${esc(noRecord ? 'No catalogue record' : title)}</div>
@@ -542,7 +548,7 @@ function resultCard(data) {
 }
 
 $('scan-result').addEventListener('click', async (event) => {
-  const button = event.target.closest('button[data-act]');
+  const button = event.target.closest('[data-act]');
   if (!button) return;
   const act = button.dataset.act;
   const isbn = button.dataset.isbn;
@@ -657,7 +663,14 @@ function openDetail(isbn) {
       <div class="book-meta">
         <div class="book-title">${esc(book.title)}</div>
         <div class="book-sub">${esc((book.authors ?? []).join(', '))}</div>
-        <div class="book-extra">${esc([book.owner, book.series && book.volume ? `${book.series} #${book.volume}` : book.series, book.publisher, book.published, book.pages ? `${book.pages} pp` : null].filter(Boolean).join(' · '))}</div>
+        <div class="book-extra">${esc([book.owner, book.publisher, book.published, book.pages ? `${book.pages} pp` : null].filter(Boolean).join(' · '))}</div>
+        ${
+          book.series
+            ? `<button class="link series-link" data-goto-series="${esc(book.series)}">${esc(book.series)}${
+                book.volume ? ` #${esc(book.volume)}` : ''
+              } →</button>`
+            : ''
+        }
         ${book.rating ? `<div class="book-extra">★ ${esc(book.rating)} <span>(${esc(book.ratingsCount ?? 0)})</span></div>` : ''}
       </div>
     </div>
@@ -1483,18 +1496,39 @@ $('series-list').addEventListener('click', async (event) => {
     const missing = data.missing ?? [];
 
     if (!missing.length) {
-      // Distinguish the three honest outcomes: everything known, the series is known
-      // but barely modelled, and nothing at all. "Unknown" alone left the reader
-      // unable to tell whether the app was broken.
-      const message = data.total
-        ? 'Nothing else is known for this series — you have them all.'
-        : data.seriesQid
-          ? 'Wikidata knows this series but lists none of its books. The numbered gaps above are still accurate.'
-          : 'Wikidata has no record of this series, so the titles are unavailable. The numbered gaps above still show what you are missing.';
-      out.innerHTML = `<p class="hint" style="margin:0">${message}</p>`;
+      // Say which route failed and why. "Unavailable" with no reason is what made
+      // this feature impossible to debug from the phone.
+      const google = (data.tried ?? []).find((entry) => entry.source === 'google');
+      const wiki = (data.tried ?? []).find((entry) => entry.source === 'wikidata');
+      const routes = [
+        `Wikidata: ${wiki?.ok ? `${wiki.volumes} volume(s) via ${wiki.matchedBy}` : 'no match'}`,
+        google
+          ? `Google: ${google.ok ? `${google.results} book(s) for that author` : google.reason ?? 'request failed'}`
+          : 'Google: not attempted',
+      ].join(' · ');
+
+      let message;
+      if (data.total) {
+        message = 'Nothing else is known for this series — you have them all.';
+      } else if (google && !google.ok) {
+        message = `No titles found. The Google search was rejected${google.reason ? ` (${google.reason})` : ''} — that is the key or its quota.`;
+      } else if (google?.reason) {
+        message = `No titles found: ${google.reason}.`;
+      } else if (google && google.results === 0) {
+        message = 'No titles found: Google returned no books for that author.';
+      } else if (data.seriesQid) {
+        message = 'Wikidata knows this series but lists none of its books. The numbered gaps above are still accurate.';
+      } else {
+        message = 'No source lists this series, so the titles cannot be filled in. The numbered gaps above still show what you are missing.';
+      }
+      out.innerHTML = `<p class="hint" style="margin:0 0 6px">${message}</p>
+        <p class="hint" style="margin:0;opacity:0.7;font-size:11px">Tried — ${esc(routes)}</p>`;
     } else {
+      // Name the source: these titles came from Google here, not Wikidata, and
+      // saying otherwise would send the reader to the wrong place to fix it.
+      const source = data.matchedBy === 'google' ? 'Google Books' : 'Wikidata';
       const sparse = data.total > 0 && data.total <= 3
-        ? `<p class="hint" style="margin:0 0 6px">Wikidata lists only ${data.total} of this series' books, so this list is incomplete — the numbered gaps above remain the reliable count.</p>`
+        ? `<p class="hint" style="margin:0 0 6px">${source} lists only ${data.total} of this series' books, so this list is incomplete — the numbered gaps above remain the reliable count.</p>`
         : '';
       out.innerHTML = `${sparse}<div class="more-head">Not on your shelf yet · ${missing.length}
           ${data.total ? `<span>of ${data.total} known</span>` : ''}</div>
@@ -1544,4 +1578,37 @@ $('series-list').addEventListener('click', async (event) => {
     button.textContent = '+ wishlist';
     toast('Could not add that one');
   }
+});
+
+/**
+ * "Andromache #1 →" in the book sheet: jump to the Series tab with that series
+ * selected, and open its list of missing titles.
+ */
+$('sheet-body').addEventListener('click', async (event) => {
+  const link = event.target.closest('[data-goto-series]');
+  if (!link) return;
+  const name = link.dataset.gotoSeries;
+  closeSheet();
+  setTab('series');
+  const search = $('series-search');
+  if (search) search.value = name;
+  state.seriesQuery = name;
+  renderSeries();
+  // Open the matching card straight away: the point of the jump is the gap list.
+  requestAnimationFrame(() => {
+    const card = [...document.querySelectorAll('.series-card')].find(
+      (node) => node.querySelector('.series-name')?.textContent.trim() === name,
+    );
+    card?.querySelector('[data-series-volumes]')?.click();
+  });
+});
+
+/**
+ * Clicking anywhere on a series card opens it, not just the button - the card is
+ * the obvious thing to tap.
+ */
+$('series-list').addEventListener('click', (event) => {
+  if (event.target.closest('button, a, [data-wish-isbn]')) return;
+  const card = event.target.closest('.series-card');
+  card?.querySelector('[data-series-volumes]')?.click();
 });
