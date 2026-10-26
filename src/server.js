@@ -993,22 +993,24 @@ const server = http.createServer(async (req, res) => {
          * ones whose title contains the series name is the only route left, and it
          * is why a Google key makes this feature work at all for small presses.
          */
-        if (!(cached.volumes?.length)) {
+        /**
+         * Last resort: search Google for the series name in titles.
+         *
+         * Searched by author first, which is unreliable: the metadata-only volumes
+         * this app exists to rescue frequently have NO author indexed at all, so
+         * inauthor:"..." returns nothing even though the books are there. Titles,
+         * however, are indexed - they are what the volume page is built from. So
+         * title queries come first and the author query is only a fallback.
+         */
+        if (!(cached.volumes?.length) && googleBooksKey()) {
           const author = summary.items.find((item) => item.authors?.length)?.authors?.[0];
-          if (!author) tried.push({ source: 'google', ok: false, reason: 'no author on the books in this series' });
-          else if (!googleBooksKey()) {
-            // Distinguish "no key" from "key rejected": they need different fixes.
-            tried.push({ source: 'google', ok: false, reason: 'no Google Books key configured' });
-          } else if (author) {
-            // Google expects inauthor:"Name" - the quotes are part of the query.
-            const query = `inauthor:"${author}"`;
+          const queries = [];
+          if (summary.name) queries.push(`intitle:"${summary.name}"`);
+          if (summary.name) queries.push(`"${summary.name}"`);
+          if (author) queries.push(`inauthor:"${author}"`);
+
+          for (const query of queries) {
             const found = await googleBooksSearch(query).catch(() => null);
-            tried.push({
-              source: 'google',
-              query,
-              ok: Boolean(found),
-              results: found?.length ?? 0,
-            });
             const name = normaliseTitle(summary.name);
             const volumes = [];
             const seenTitles = new Set();
@@ -1025,14 +1027,25 @@ const server = http.createServer(async (req, res) => {
                 isbn13: volume.isbn13,
               });
             }
+            tried.push({
+              source: 'google',
+              query,
+              ok: Boolean(found),
+              results: found?.length ?? 0,
+              matched: volumes.length,
+            });
             if (volumes.length) {
               cached = { seriesQid: cached.seriesQid ?? null, matchedBy: 'google', volumes };
-            } else if (found?.length) {
-              // The author has books, but none of their titles contain the series
-              // name - so this series cannot be inferred this way.
-              tried[tried.length - 1].reason = 'titles did not contain the series name';
+              break;
             }
           }
+
+          if (!queries.length) {
+            tried.push({ source: 'google', ok: false, reason: 'nothing to search for' });
+          }
+        } else if (!googleBooksKey()) {
+          // Distinguish "no key" from "key rejected": they need different fixes.
+          tried.push({ source: 'google', ok: false, reason: 'no Google Books key configured' });
         }
 
         // Only cache a real answer. Caching "nothing" because no book in the series

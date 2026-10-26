@@ -1496,34 +1496,38 @@ $('series-list').addEventListener('click', async (event) => {
     const missing = data.missing ?? [];
 
     if (!missing.length) {
-      // Say which route failed and why. "Unavailable" with no reason is what made
-      // this feature impossible to debug from the phone.
-      const google = (data.tried ?? []).find((entry) => entry.source === 'google');
+      // Every route, and what each said. Without this, "no titles" cannot be told
+      // apart from "the search never ran".
+      const google = (data.tried ?? []).filter((entry) => entry.source === 'google');
       const wiki = (data.tried ?? []).find((entry) => entry.source === 'wikidata');
+      const shortQuery = (query) => String(query ?? '').replace(/\s+/g, ' ').slice(0, 32);
+
       const routes = [
         `Wikidata: ${wiki?.ok ? `${wiki.volumes} volume(s) via ${wiki.matchedBy}` : 'no match'}`,
-        google
-          ? `Google: ${google.ok ? `${google.results} book(s) for that author` : google.reason ?? 'request failed'}`
+        google.length
+          ? `Google: ${google
+              .map((entry) =>
+                entry.ok
+                  ? `${shortQuery(entry.query)} → ${entry.results} found, ${entry.matched ?? 0} matched`
+                  : `${shortQuery(entry.query)} → ${entry.reason ?? 'request failed'}`,
+              )
+              .join(' · ')}`
           : 'Google: not attempted',
-      ].join(' · ');
+      ].join('  |  ');
 
       let message;
       if (data.total) {
         message = 'Nothing else is known for this series — you have them all.';
-      } else if (google && !google.ok) {
-        message = `No titles found. The Google search was rejected${google.reason ? ` (${google.reason})` : ''} — that is the key or its quota.`;
-      } else if (google?.reason) {
-        message = `No titles found: ${google.reason}.`;
-      } else if (google && google.results === 0) {
-        message = 'No titles found: Google returned no books for that author.';
-      } else if (data.seriesQid) {
-        message = 'Wikidata knows this series but lists none of its books. The numbered gaps above are still accurate.';
+      } else if (google.length && google.every((entry) => !entry.ok)) {
+        message = `No titles found. Every Google search was rejected — that is the key or its quota.`;
       } else {
-        message = 'No source lists this series, so the titles cannot be filled in. The numbered gaps above still show what you are missing.';
+        message =
+          'No source lists the other books in this series, so the titles cannot be filled in. The numbered gaps above still show what you are missing.';
       }
       out.innerHTML = `<p class="hint" style="margin:0 0 6px">${message}</p>
-        <p class="hint" style="margin:0;opacity:0.7;font-size:11px">Tried — ${esc(routes)}</p>`;
+        <p class="hint" style="margin:0;opacity:0.7;font-size:11px">${esc(routes)}</p>`;
     } else {
+
       // Name the source: these titles came from Google here, not Wikidata, and
       // saying otherwise would send the reader to the wrong place to fix it.
       const source = data.matchedBy === 'google' ? 'Google Books' : 'Wikidata';
