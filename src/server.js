@@ -12,7 +12,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, extname, resolve, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { openDb, findBook, saveBook, listBooks, listSeries, seriesSummary, stats, recordScan, recentScans, deleteBook, exportAll, getLookupCache, setLookupCache } from './db.js';
+import { openDb, findBook, saveBook, listBooks, listSeries, seriesSummary, stats, recordScan, recentScans, deleteBook, exportAll, getLookupCache, setLookupCache, clearLookupCache } from './db.js';
 import { normaliseIsbn } from './isbn.js';
 import { missingVolumes, describeMissing, seriesKey, parseSeries } from './series.js';
 import { seriesFromWikidata } from './wikidata.js';
@@ -20,7 +20,7 @@ import { googleBooksByIsbn, googleBooksKey } from './googlebooks.js';
 import { authorKey } from './authors.js';
 import { lookupIsbn, fetchRating } from './lookup.js';
 import { ensurePin, createAuth, parseCookies } from './auth.js';
-import { ensureCover, coverFile, hasCover, coverMissPending, clearCoverMiss } from './covers.js';
+import { ensureCover, coverFile, hasCover, coverMissPending, clearCoverMiss, clearAllCoverMisses } from './covers.js';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(HERE, '..', 'public');
@@ -645,6 +645,19 @@ const server = http.createServer(async (req, res) => {
         return { ...s, missing, ranges, highestOwned, missingSentence: describeMissing(ranges) };
       });
       return json(res, 200, { series });
+    }
+
+    /**
+     * Rebuild derived data: forget cached lookups and "no cover" markers so the
+     * next scan fetches fresh metadata. The catalogue itself is untouched - this
+     * is the reset you want after adding an API key, not a wipe.
+     */
+    if (pathname === '/api/cache/reset' && method === 'POST') {
+      return json(res, 200, {
+        lookups: clearLookupCache(db),
+        coverMisses: clearAllCoverMisses(DATA_DIR),
+        books: stats(db).owned,
+      });
     }
 
     if (pathname === '/api/stats' && method === 'GET') return json(res, 200, stats(db));

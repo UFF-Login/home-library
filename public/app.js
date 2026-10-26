@@ -501,7 +501,21 @@ $('scan-result').addEventListener('click', async (event) => {
     const targetState = act === 'buy' ? 'owned' : 'wishlist';
     const scan = state.lastScan;
     const work = scan && scan.isbn13 === isbn ? scan.preview : null;
-    await addBook(isbn, targetState, work);
+    try {
+      await addBook(isbn, targetState, work);
+    } catch (error) {
+      // This used to fail silently: an add with no metadata and no title returns
+      // 422, the promise rejected into nothing, and the book simply never
+      // appeared. Any failure now says so, and the not-found case goes straight
+      // to the manual form with the ISBN already filled in.
+      if (error?.data?.error === 'not_found' || error?.message === 'not_found') {
+        toast('No catalogue record - add the title by hand');
+        openManualAdd(isbn);
+        return;
+      }
+      toast(`Could not add: ${error?.message ?? 'unknown error'}`);
+      return;
+    }
     toast(targetState === 'owned' ? 'Added to your library' : 'Added to wishlist');
     await Promise.all([loadShelf(), loadStats(), loadSeries()]);
     return handleScan(isbn);
@@ -1054,3 +1068,19 @@ if ('serviceWorker' in navigator) {
 }
 
 init();
+
+// "Rebuild book data": clears the lookup cache and the negative cover cache. The
+// catalogue is untouched, so this is safe to press whenever enrichment looks stale.
+$('btn-rebuild').addEventListener('click', async () => {
+  const button = $('btn-rebuild');
+  button.disabled = true;
+  try {
+    const result = await api('/api/cache/reset', { method: 'POST' });
+    $('covers-status').textContent = `Cleared ${result.lookups} cached lookups and ${result.coverMisses} "no cover" results. Rescan a book to fetch it fresh.`;
+    await loadShelf();
+  } catch {
+    $('covers-status').textContent = 'Could not rebuild — try again.';
+  } finally {
+    button.disabled = false;
+  }
+});

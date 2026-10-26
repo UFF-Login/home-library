@@ -484,3 +484,12 @@ export function exportAll(db) {
       .all(),
   };
 }
+
+/**
+ * Drop every cached metadata lookup. Used by "rebuild book data": after adding an
+ * API key, or when enrichment looks wrong, this makes the next scan fetch fresh
+ * while leaving the catalogue itself untouched.
+ */
+export function clearLookupCache(db) {
+  return db.prepare('DELETE FROM lookup_cache').run().changes;
+}

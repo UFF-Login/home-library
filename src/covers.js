@@ -19,7 +19,7 @@
 //    of a real cover (128x183 vs 128x186), and Google even renders it at 575x821
 //    when zoomed - so no size test separates them. Both are out by default: a
 //    missing cover beats a confidently wrong one.
-import { existsSync, mkdirSync, writeFileSync, statSync, rmSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync, statSync, rmSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { isbn13To10 } from './isbn.js';
 import { verifiedSearchDoc } from './openlibrary.js';
@@ -194,4 +194,20 @@ export function coverMissPending(dataDir, isbn13) {
 
 export function clearCoverMiss(dataDir, isbn13) {
   rmSync(missFile(dataDir, isbn13), { force: true });
+}
+
+/**
+ * Forget every "no cover" marker so the next request retries all sources.
+ * Covers already on disk are kept - only the negative cache is cleared.
+ */
+export function clearAllCoverMisses(dataDir) {
+  const dir = join(dataDir, 'covers');
+  if (!existsSync(dir)) return 0;
+  let cleared = 0;
+  for (const entry of readdirSync(dir)) {
+    if (!entry.endsWith('.none')) continue;
+    rmSync(join(dir, entry), { force: true });
+    cleared += 1;
+  }
+  return cleared;
 }
