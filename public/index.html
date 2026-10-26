@@ -89,6 +89,11 @@
       <section class="view" id="view-shelf">
         <div class="shelf-tools">
           <input id="search" type="search" placeholder="Search title, author, series or ISBN" />
+          <select id="group-by" class="group-select" aria-label="Group books by">
+            <option value="">All together</option>
+            <option value="author">Group by author</option>
+            <option value="series">Group by series</option>
+          </select>
           <div class="chips" id="shelf-filters">
             <button class="chip active" data-filter="">All</button>
             <button class="chip" data-filter="owned">Owned</button>

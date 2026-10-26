@@ -40,10 +40,12 @@ import {
   cleanDescriptions,
   bumpCoverEpoch,
   coverEpoch,
+  getSeriesCache,
+  setSeriesCache,
 } from './db.js';
 import { normaliseIsbn } from './isbn.js';
 import { missingVolumes, describeMissing, seriesKey, parseSeries } from './series.js';
-import { seriesFromWikidata } from './wikidata.js';
+import { seriesFromWikidata, seriesVolumes } from './wikidata.js';
 import { googleBooksLookup, googleBooksProbe, googleBooksKey } from './googlebooks.js';
 import { authorKey } from './authors.js';
 import { lookupIsbn, fetchRating } from './lookup.js';
@@ -941,6 +943,53 @@ const server = http.createServer(async (req, res) => {
       const epoch = bumpCoverEpoch(db);
       console.log('[wipe] database cleared', wiped, 'covers invalidated (epoch ' + epoch + ')');
       return json(res, 200, { wiped, backup: basename(backupPath) });
+    }
+
+    /**
+     * What else is in this series? Answers the question a shelf raises but cannot
+     * settle: "I have 2, 3 and 7 - what am I looking for?" Titles come from
+     * Wikidata, cached for a month because a series rarely changes.
+     */
+    const seriesVolumesMatch = /^\/api\/series\/([a-z0-9-]+)\/volumes$/.exec(pathname);
+    if (seriesVolumesMatch && method === 'GET') {
+      const seriesKeyValue = seriesVolumesMatch[1];
+      const summary = seriesSummary(db, seriesKeyValue);
+      if (!summary) return json(res, 404, { error: 'unknown_series' });
+
+      let cached = getSeriesCache(db, seriesKeyValue);
+      if (!cached) {
+        const workKey = summary.items.find((item) => item.workKey)?.workKey ?? null;
+        const fromWiki = workKey ? await seriesVolumes(workKey).catch(() => null) : null;
+        cached = fromWiki ?? { seriesQid: null, volumes: [] };
+        // Only cache a real answer. Caching "nothing" because no book in the series
+        // had an Open Library work key would hide the titles for a month after a
+        // single book was added by ISBN alone.
+        if (fromWiki) setSeriesCache(db, seriesKeyValue, cached);
+      }
+
+      const normalise = (value) =>
+        String(value ?? '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, ' ')
+          .trim();
+
+      const owned = summary.items.filter((item) => item.state === 'owned');
+      const ownedTitles = new Set(owned.map((item) => normalise(item.title)));
+      const ownedVolumes = new Set(
+        owned.map((item) => (item.volume ? Math.trunc(item.volume) : null)).filter((v) => v !== null),
+      );
+
+      const missing = (cached.volumes ?? []).filter((volume) => {
+        if (volume.volume != null && ownedVolumes.has(volume.volume)) return false;
+        if (ownedTitles.has(normalise(volume.title))) return false;
+        return true;
+      });
+
+      return json(res, 200, {
+        seriesQid: cached.seriesQid ?? null,
+        total: (cached.volumes ?? []).length,
+        missing,
+      });
     }
 
     if (pathname === '/api/stats' && method === 'GET') return json(res, 200, stats(db));

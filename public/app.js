@@ -819,17 +819,72 @@ $('shelf-grid').addEventListener('click', (event) => {
 function renderShelf() {
   const books = state.filter === 'loaned' ? state.books.filter((b) => b.loanedTo) : state.books;
   const grid = $('shelf-grid');
-  grid.innerHTML = books
-    .map(
-      (book) => `<button class="tile ${book.state === 'wishlist' ? 'badge' : ''}" data-badge="wish" data-isbn="${esc(book.isbn13)}">
+
+  const tile = (book) => `<button class="tile ${book.state === 'wishlist' ? 'badge' : ''}" data-badge="wish" data-isbn="${esc(book.isbn13)}">
         ${coverHtml(book)}
-        <div class="tile-title">${esc(book.title)}</div>
+        <div class="tile-title">${esc(book.title || 'Unknown book')}</div>
         <div class="tile-author">${esc((book.authors ?? [])[0] ?? '')}</div>
-      </button>`,
-    )
+      </button>`;
+
+  /**
+   * Grouping answers "what have I got by this author / in this series" without a
+   * search, which is the question a shelf is usually asked.
+   */
+  const groupOf = (book) =>
+    state.groupBy === 'author'
+      ? (book.authors ?? [])[0] || 'Unknown author'
+      : state.groupBy === 'series'
+        ? book.series || 'No series'
+        : null;
+
+  grid.classList.toggle('grouped', Boolean(state.groupBy));
+
+  if (!state.groupBy) {
+    grid.innerHTML = books.map(tile).join('');
+    $('shelf-empty').hidden = books.length > 0;
+    $('shelf-empty').textContent = 'Nothing here yet. Scan a barcode to start.';
+    return;
+  }
+
+  const groups = new Map();
+  for (const book of books) {
+    const key = groupOf(book);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(book);
+  }
+
+  // Series groups in volume order; everything else alphabetically by title.
+  const names = [...groups.keys()].sort((a, b) => {
+    // "No series" and "Unknown author" sort last: they are the leftovers.
+    const leftovers = (name) => name === 'No series' || name === 'Unknown author';
+    if (leftovers(a) !== leftovers(b)) return leftovers(a) ? 1 : -1;
+    return a.localeCompare(b, undefined, { sensitivity: 'base' });
+  });
+
+  grid.innerHTML = names
+    .map((name) => {
+      const items = groups.get(name).sort((a, b) => {
+        if (state.groupBy === 'series') {
+          if ((a.volume ?? 0) !== (b.volume ?? 0)) return (a.volume ?? 0) - (b.volume ?? 0);
+        }
+        return (a.title || '').localeCompare(b.title || '', undefined, { sensitivity: 'base' });
+      });
+      return `<section class="book-group">
+        <div class="group-head"><span>${esc(name)}</span><span class="group-count">${items.length}</span></div>
+        <div class="grid">${items.map(tile).join('')}</div>
+      </section>`;
+    })
     .join('');
+
   $('shelf-empty').hidden = books.length > 0;
+  $('shelf-empty').textContent = 'Nothing here yet. Scan a barcode to start.';
 }
+
+$('group-by').addEventListener('change', (event) => {
+  state.groupBy = event.target.value;
+  renderShelf();
+});
+
 
 $('shelf-grid').addEventListener('click', (event) => {
   const tile = event.target.closest('.tile');
@@ -895,6 +950,8 @@ function renderSeries() {
         </div>
         ${series.ranges?.length ? `<div class="gap">Missing ${esc(series.ranges.join(', '))}</div>` : '<div class="hint" style="margin:0">Complete to the highest volume you own.</div>'}
         <div class="vol-pills">${pills.join('')}</div>
+        <button class="ghost series-more-btn" data-series-volumes="${esc(series.key)}">What else is in this series?</button>
+        <div class="series-more" hidden></div>
       </div>`;
     })
     .join('');
@@ -1400,3 +1457,57 @@ function wipeThirdStep() {
 }
 
 $('btn-wipe').addEventListener('click', startWipe);
+
+/**
+ * Name the gaps in a series.
+ *
+ * "Missing 1, 4, 5" is only half an answer; standing in a bookshop you need the
+ * titles. Wikidata supplies them (cached server-side for a month), so this shows
+ * what is not on your shelf yet.
+ */
+$('series-list').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-series-volumes]');
+  if (!button) return;
+  const card = button.closest('.series-card');
+  const out = card.querySelector('.series-more');
+
+  if (out.dataset.loaded === '1') {
+    out.hidden = !out.hidden;
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = 'Asking Wikidata…';
+  try {
+    const data = await api(`/api/series/${encodeURIComponent(button.dataset.seriesVolumes)}/volumes`);
+    const missing = data.missing ?? [];
+
+    if (!missing.length) {
+      out.innerHTML = `<p class="hint" style="margin:0">${
+        data.total
+          ? 'Nothing else is known for this series — you have them all.'
+          : 'Wikidata does not list this series, so the missing titles are unknown.'
+      }</p>`;
+    } else {
+      out.innerHTML = `<div class="more-head">Not on your shelf yet · ${missing.length}
+          ${data.total ? `<span>of ${data.total} known</span>` : ''}</div>
+        <div class="more-list">${missing
+          .slice(0, 80)
+          .map(
+            (volume) => `<div class="more-row">
+              <span class="more-vol">${volume.volume ? `#${esc(volume.volume)}` : '–'}</span>
+              <span class="more-title">${esc(volume.title)}</span>
+              <span class="more-year">${esc(volume.year ?? '')}</span>
+            </div>`,
+          )
+          .join('')}</div>`;
+    }
+    out.dataset.loaded = '1';
+    out.hidden = false;
+    button.textContent = 'Hide the missing titles';
+  } catch {
+    button.textContent = 'Could not reach Wikidata — try again';
+  } finally {
+    button.disabled = false;
+  }
+});

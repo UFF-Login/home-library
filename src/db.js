@@ -64,6 +64,13 @@ CREATE TABLE IF NOT EXISTS owners (
   created_at  TEXT NOT NULL
 );
 
+-- What a whole series contains, fetched from Wikidata and kept for a month.
+CREATE TABLE IF NOT EXISTS series_cache (
+  series_key  TEXT PRIMARY KEY,
+  payload     TEXT NOT NULL,
+  fetched_at  TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS books_state_idx ON books(state);
 CREATE INDEX IF NOT EXISTS books_work_idx ON books(work_id);
 CREATE INDEX IF NOT EXISTS works_series_idx ON works(series_key);
@@ -432,7 +439,7 @@ export function seriesSummary(db, seriesKeyValue) {
   if (!seriesKeyValue) return null;
   const rows = db
     .prepare(
-      `SELECT w.series, w.volume, w.title, b.isbn13, b.state
+      `SELECT w.series, w.volume, w.title, w.work_key, b.isbn13, b.state
          FROM books b JOIN works w ON w.id = b.work_id
         WHERE w.series_key = ? ORDER BY w.volume`,
     )
@@ -446,7 +453,14 @@ export function seriesSummary(db, seriesKeyValue) {
     name: rows.find((r) => r.series)?.series ?? seriesKeyValue,
     ownedVolumes,
     ownedCount: rows.filter((r) => r.state === 'owned').length,
-    items: rows,
+    items: rows.map((r) => ({
+      isbn13: r.isbn13,
+      title: r.title,
+      volume: r.volume,
+      state: r.state,
+      // Needed to ask Wikidata what the rest of the series contains.
+      workKey: r.work_key ?? null,
+    })),
   };
 }
 
@@ -701,4 +715,27 @@ export function bumpCoverEpoch(db) {
 
 export function coverEpoch(db) {
   return Number(getMeta(db, 'coverEpoch') ?? 0);
+}
+
+
+/** Cached list of everything a series contains, or null if absent/too old. */
+export function getSeriesCache(db, seriesKeyValue, maxAgeDays = 30) {
+  const row = db
+    .prepare('SELECT payload, fetched_at FROM series_cache WHERE series_key = ?')
+    .get(seriesKeyValue);
+  if (!row) return null;
+  const age = Date.now() - Date.parse(row.fetched_at);
+  if (Number.isFinite(age) && age > maxAgeDays * 24 * 60 * 60 * 1000) return null;
+  try {
+    return JSON.parse(row.payload);
+  } catch {
+    return null;
+  }
+}
+
+export function setSeriesCache(db, seriesKeyValue, payload) {
+  db.prepare(
+    `INSERT INTO series_cache (series_key, payload, fetched_at) VALUES (?, ?, ?)
+     ON CONFLICT(series_key) DO UPDATE SET payload = excluded.payload, fetched_at = excluded.fetched_at`,
+  ).run(seriesKeyValue, JSON.stringify(payload), new Date().toISOString());
 }

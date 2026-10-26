@@ -386,3 +386,146 @@ button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
   .topbar { max-width: 620px; margin: 0 auto; }
   .sheet { max-width: 620px; left: 50%; transform: translateX(-50%); border-radius: 20px 20px 0 0; }
 }
+
+/* ================= wide screens =================
+   The phone layout is a single 620px column with a bottom tab bar. On a monitor
+   that wastes most of the screen, so from 1000px: a left rail replaces the tab
+   bar, content is left-aligned in a wide column, and the scan view splits into
+   camera beside result. Below 1000px nothing here applies. */
+@media (min-width: 1000px) {
+  #app {
+    max-width: none;
+    padding-left: 232px; /* room for the rail */
+  }
+
+  /* The tab bar becomes a persistent left rail: four large targets, always visible. */
+  .tabs {
+    top: 0; right: auto; bottom: 0; left: 0;
+    width: 232px; height: 100vh;
+    grid-template-columns: 1fr;
+    grid-auto-rows: 56px;
+    align-content: start;
+    gap: 2px;
+    padding: 76px 12px 16px;
+    border-top: 0;
+    border-right: 1px solid var(--line);
+    background: #171310;
+    backdrop-filter: none;
+    max-width: none;
+    transform: none;
+    border-radius: 0;
+  }
+  .tab {
+    grid-auto-flow: column;
+    justify-content: start;
+    gap: 12px;
+    padding: 0 14px;
+    border-radius: 10px;
+    font-size: 14px;
+  }
+  .tab span { font-size: 18px; }
+  .tab.active { background: rgba(224, 163, 74, 0.12); }
+  .tab:hover { background: rgba(255, 255, 255, 0.04); }
+
+  .topbar {
+    max-width: none;
+    padding: 20px 32px 12px;
+    background: var(--bg);
+  }
+  .topbar h1 { font-size: 26px; }
+
+  .view { padding: 0 32px 40px; max-width: 1500px; }
+
+  /* Scan: camera on the left, what you scanned on the right - no scrolling. */
+  #view-scan.active {
+    display: grid;
+    grid-template-columns: minmax(320px, 520px) minmax(380px, 1fr);
+    grid-template-areas:
+      "camera result"
+      "actions result"
+      "manual result";
+    grid-template-rows: auto auto 1fr;
+    gap: 12px 28px;
+    align-items: start;
+  }
+  /* Without this the 4:3 box shrinks to whatever the max-height allows, leaving a
+     small camera in a wide column. */
+  /* Explicit width: with only an aspect-ratio the box sizes to the <video>'s
+     intrinsic 300x150 instead of filling its column. */
+  #view-scan .scanner { grid-area: camera; max-height: none; width: 100%; }
+  /* No result yet: let the camera use the whole width rather than leaving half the
+     screen empty. :has() keeps this CSS-only - no state to keep in sync. */
+  #view-scan.active:not(:has(#scan-result .card)) {
+    grid-template-columns: minmax(320px, 760px) minmax(0, 1fr);
+  }
+  #view-scan .scan-actions { grid-area: actions; margin-top: 0; }
+  #view-scan .manual { grid-area: manual; }
+  #scan-result { grid-area: result; position: static; margin: 0; }
+
+  /* Shelves and series breathe: more columns, larger covers. */
+  .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 18px; }
+  .tile-title { font-size: 13px; }
+  .series-list { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 14px; }
+  .stat-grid { grid-template-columns: repeat(6, 1fr); }
+  .panel { max-width: none; }
+  #view-more { display: none; }
+  #view-more.active {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+    gap: 14px;
+    align-items: start;
+  }
+  #view-more.active > .stat-grid { grid-column: 1 / -1; }
+  #view-more .panel { margin-bottom: 0; }
+
+  /* The book sheet becomes a centred dialog rather than a phone bottom sheet. */
+  .sheet {
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 820px;
+    max-height: 82vh;
+    bottom: 6vh;
+    border-radius: 20px;
+    border: 1px solid var(--line);
+  }
+  .sheet-backdrop, #sheet-backdrop { background: rgba(0, 0, 0, 0.6); }
+}
+
+/* ---------- shelf grouping ---------- */
+/* When grouped, the tiles live inside each group's own grid, so the outer
+   container must stop being a grid (it would otherwise lay groups out as tiles). */
+.grid.grouped { display: block; }
+.shelf-tools { display: grid; gap: 10px; margin-bottom: 14px; }
+.group-select { max-width: 220px; padding: 10px 40px 10px 14px; font-size: 14px; }
+.book-group { margin-bottom: 26px; }
+.group-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  font-size: 13px; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--muted); padding-bottom: 8px; margin-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.group-count { font-variant-numeric: tabular-nums; }
+
+@media (min-width: 1000px) {
+  /* search and the group picker sit on one line when there is room */
+  .shelf-tools { grid-template-columns: minmax(280px, 1fr) 220px; align-items: center; }
+  .shelf-tools .chips { grid-column: 1 / -1; }
+}
+
+/* ---------- missing titles inside a series card ---------- */
+.series-more-btn { justify-self: start; font-size: 13px; padding: 8px 12px; }
+.series-more { display: grid; gap: 6px; }
+.more-head {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  display: flex; gap: 8px; align-items: baseline;
+}
+.more-head span { text-transform: none; letter-spacing: 0; opacity: 0.75; }
+.more-list { display: grid; gap: 2px; max-height: 260px; overflow-y: auto; }
+.more-row {
+  display: grid; grid-template-columns: 42px 1fr 46px; gap: 8px; align-items: baseline;
+  font-size: 13px; padding: 3px 0; border-bottom: 1px solid rgba(50, 44, 37, 0.6);
+}
+.more-row:last-child { border-bottom: 0; }
+.more-vol { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 12px; }
+.more-title { color: var(--text); }
+.more-year { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
