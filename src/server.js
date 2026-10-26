@@ -37,6 +37,7 @@ import {
   defaultOwnerName,
   listPendingEnrichment,
   wipeDatabase,
+  clearSeriesCache,
   cleanDescriptions,
   bumpCoverEpoch,
   coverEpoch,
@@ -863,6 +864,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/cache/reset' && method === 'POST') {
       const lookups = clearLookupCache(db);
       const coverMisses = clearAllCoverMisses(DATA_DIR);
+      const seriesAnswers = clearSeriesCache(db);
 
       // Books that were registered before any provider could name them get another
       // attempt, in the background - which is what makes a later key useful for
@@ -873,6 +875,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         lookups,
         coverMisses,
+        seriesAnswers,
         pending: pending.length,
         books: stats(db).owned,
       });
@@ -966,7 +969,9 @@ const server = http.createServer(async (req, res) => {
 
       // The key carries a version: answers cached by an older, narrower lookup must
       // not outlive the fix that widened it.
-      const cacheKey = `v3:${seriesKeyValue}`;
+      // Bumped whenever the filtering rules change: a cached answer built by a
+      // looser filter must never be served again.
+      const cacheKey = `v4:${seriesKeyValue}`;
       // Every route that was tried, and what it said. Without this a failure is
       // indistinguishable from an empty answer, which is exactly what made "no
       // record" impossible to act on.

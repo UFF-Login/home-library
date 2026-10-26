@@ -661,6 +661,9 @@ export function wipeDatabase(db) {
     scans: count('scans'),
     lookups: count('lookup_cache'),
     owners: count('owners'),
+    // Derived, but still a cache of *this* library: an answer computed for the old
+    // catalogue must not survive a wipe, or a clean test inherits yesterday's data.
+    seriesCache: count('series_cache'),
   };
 
   db.exec('BEGIN');
@@ -669,6 +672,7 @@ export function wipeDatabase(db) {
     db.exec('DELETE FROM works');
     db.exec('DELETE FROM scans');
     db.exec('DELETE FROM lookup_cache');
+    db.exec('DELETE FROM series_cache');
     db.exec('DELETE FROM owners');
     // A library always has someone to attribute a book to; leaving the list empty
     // would make the next add fail for a reason nobody could see.
@@ -747,4 +751,10 @@ export function setSeriesCache(db, seriesKeyValue, payload) {
     `INSERT INTO series_cache (series_key, payload, fetched_at) VALUES (?, ?, ?)
      ON CONFLICT(series_key) DO UPDATE SET payload = excluded.payload, fetched_at = excluded.fetched_at`,
   ).run(seriesKeyValue, JSON.stringify(payload), new Date().toISOString());
+}
+
+
+/** Forget every cached series answer (used by "rebuild book data"). */
+export function clearSeriesCache(db) {
+  return db.prepare('DELETE FROM series_cache').run().changes;
 }

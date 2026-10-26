@@ -19,6 +19,8 @@ import {
   wipeDatabase,
   listBooks,
   stats,
+  setSeriesCache,
+  getSeriesCache,
 } from '../src/db.js';
 
 const work = (title) => ({ title, authors: ['Someone'], authorKey: 'someone:s' });
@@ -115,4 +117,14 @@ test('wiping removes everything and leaves a usable owner list', () => {
   // And the catalogue is usable immediately afterwards.
   const fresh = saveBook(db, { isbn13: '9780590453660', work: work('Stay Out of the Basement') });
   assert.equal(fresh.owner, 'Me');
+});
+
+test('a wipe also clears cached series answers', () => {
+  const db = openDb(':memory:');
+  saveBook(db, { isbn13: '9780330360890', work: work('Ice Station') });
+  setSeriesCache(db, 'andromache', { seriesQid: null, volumes: [{ title: 'Stale' }] });
+  assert.ok(getSeriesCache(db, 'andromache'), 'cache present before the wipe');
+
+  wipeDatabase(db);
+  assert.equal(getSeriesCache(db, 'andromache'), null, 'a clean test must not inherit old answers');
 });
