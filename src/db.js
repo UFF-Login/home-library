@@ -439,7 +439,7 @@ export function seriesSummary(db, seriesKeyValue) {
   if (!seriesKeyValue) return null;
   const rows = db
     .prepare(
-      `SELECT w.series, w.volume, w.title, w.work_key, b.isbn13, b.state
+      `SELECT w.series, w.volume, w.title, w.work_key, w.authors, b.isbn13, b.state
          FROM books b JOIN works w ON w.id = b.work_id
         WHERE w.series_key = ? ORDER BY w.volume`,
     )
@@ -460,6 +460,15 @@ export function seriesSummary(db, seriesKeyValue) {
       state: r.state,
       // Needed to ask Wikidata what the rest of the series contains.
       workKey: r.work_key ?? null,
+      // Needed by the Google fallback: an author's other books reveal the series.
+      authors: (() => {
+        try {
+          const parsed = JSON.parse(r.authors ?? '[]');
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      })(),
     })),
   };
 }

@@ -1505,6 +1505,12 @@ $('series-list').addEventListener('click', async (event) => {
               <span class="more-vol">${volume.volume ? `#${esc(volume.volume)}` : '–'}</span>
               <span class="more-title">${esc(volume.title)}</span>
               <span class="more-year">${esc(volume.year ?? '')}</span>
+              ${
+                // Only sources that gave us an ISBN can be added without typing.
+                volume.isbn13
+                  ? `<button class="link more-add" data-wish-isbn="${esc(volume.isbn13)}" title="Add to wishlist">+ wishlist</button>`
+                  : '<span></span>'
+              }
             </div>`,
           )
           .join('')}</div>`;
@@ -1517,5 +1523,25 @@ $('series-list').addEventListener('click', async (event) => {
     button.textContent = 'Could not reach Wikidata — try again';
   } finally {
     button.disabled = false;
+  }
+});
+
+
+// Adding a missing volume to the wishlist, straight from the series card. Only
+// possible when the source supplied an ISBN - which the Google fallback does.
+$('series-list').addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-wish-isbn]');
+  if (!button) return;
+  const isbn = button.dataset.wishIsbn;
+  button.disabled = true;
+  button.textContent = 'adding…';
+  try {
+    await api('/api/books', { method: 'POST', body: { isbn, state: 'wishlist' } });
+    button.textContent = '✓ wishlisted';
+    await Promise.all([loadShelf(), loadStats(), loadSeries()]);
+  } catch {
+    button.disabled = false;
+    button.textContent = '+ wishlist';
+    toast('Could not add that one');
   }
 });

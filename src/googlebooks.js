@@ -291,3 +291,34 @@ export async function googleBooksByIsbn(isbn13, options) {
   const result = await googleBooksLookup(isbn13, options);
   return result.status === 'ok' ? result.record : null;
 }
+
+/**
+ * Search Google Books with a free-text query.
+ *
+ * Used as a last resort for series membership: when neither Wikidata nor Open
+ * Library knows a series, an author's other books usually give it away, because
+ * volumes in a series carry the series name in the title ("Andromache Between
+ * Worlds", "Andromache in the Dark"). The caller filters by name.
+ */
+export async function googleBooksSearch(query, { timeoutMs = 8000, limit = 40 } = {}) {
+  const key = googleBooksKey();
+  if (!key) return null;
+
+  const url = `${ENDPOINT}?q=${encodeURIComponent(query)}&maxResults=${limit}&key=${encodeURIComponent(key)}`;
+  const res = await requestJson(url, timeoutMs);
+  if (!res.ok) return null;
+
+  return (res.data?.items ?? [])
+    .map((item) => item?.volumeInfo)
+    .filter(Boolean)
+    .map((info) => ({
+      title: info.title ?? null,
+      subtitle: info.subtitle ?? null,
+      year: /(\d{4})/.exec(String(info.publishedDate ?? ''))?.[1] ?? null,
+      isbn13:
+        (info.industryIdentifiers ?? [])
+          .map((identifier) => String(identifier?.identifier ?? '').replace(/[^0-9Xx]/g, ''))
+          .find((value) => value.length === 13) ?? null,
+    }))
+    .filter((volume) => volume.title);
+}

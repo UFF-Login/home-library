@@ -46,7 +46,7 @@ import {
 import { normaliseIsbn } from './isbn.js';
 import { missingVolumes, describeMissing, seriesKey, parseSeries } from './series.js';
 import { seriesFromWikidata, seriesVolumes } from './wikidata.js';
-import { googleBooksLookup, googleBooksProbe, googleBooksKey } from './googlebooks.js';
+import { googleBooksLookup, googleBooksProbe, googleBooksKey, googleBooksSearch } from './googlebooks.js';
 import { authorKey } from './authors.js';
 import { lookupIsbn, fetchRating } from './lookup.js';
 import { ensurePin, createAuth, parseCookies } from './auth.js';
@@ -593,6 +593,14 @@ async function serveStatic(req, res, pathname) {
   createReadStream(target).pipe(res);
 }
 
+/** Lowercase, strip punctuation: "Andromache Between Worlds (Andromache, #1)" -> words. */
+function normaliseTitle(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 async function serveCover(req, res, isbn13) {
   if (!/^\d{13}$/.test(isbn13)) return json(res, 400, { error: 'bad isbn' });
   const row = db
@@ -958,16 +966,53 @@ const server = http.createServer(async (req, res) => {
 
       // The key carries a version: answers cached by an older, narrower lookup must
       // not outlive the fix that widened it.
-      const cacheKey = `v2:${seriesKeyValue}`;
+      const cacheKey = `v3:${seriesKeyValue}`;
       let cached = getSeriesCache(db, cacheKey);
       if (!cached) {
         const workKey = summary.items.find((item) => item.workKey)?.workKey ?? null;
         const fromWiki = await seriesVolumes(workKey, summary.name).catch(() => null);
         cached = fromWiki ?? { seriesQid: null, volumes: [] };
+
+        /**
+         * Last resort: the author's other books.
+         *
+         * Series that neither Wikidata nor Open Library models still betray
+         * themselves in titles - "Andromache Between Worlds" and "Andromache in the
+         * Dark" share a name. Asking Google for the author's books and keeping the
+         * ones whose title contains the series name is the only route left, and it
+         * is why a Google key makes this feature work at all for small presses.
+         */
+        if (!(cached.volumes?.length)) {
+          const author = summary.items.find((item) => item.authors?.length)?.authors?.[0];
+          if (author) {
+            // Google expects inauthor:"Name" - the quotes are part of the query.
+            const found = await googleBooksSearch(`inauthor:"${author}"`).catch(() => null);
+            const name = normaliseTitle(summary.name);
+            const volumes = [];
+            const seenTitles = new Set();
+            for (const volume of found ?? []) {
+              const titleKey = normaliseTitle(volume.title);
+              if (!name || !titleKey.includes(name)) continue;
+              if (seenTitles.has(titleKey)) continue;
+              seenTitles.add(titleKey);
+              const parsed = parseSeries({ title: volume.title, subtitle: volume.subtitle });
+              volumes.push({
+                title: volume.title,
+                volume: parsed.volume != null ? Math.trunc(parsed.volume) : null,
+                year: volume.year,
+                isbn13: volume.isbn13,
+              });
+            }
+            if (volumes.length) {
+              cached = { seriesQid: cached.seriesQid ?? null, matchedBy: 'google', volumes };
+            }
+          }
+        }
+
         // Only cache a real answer. Caching "nothing" because no book in the series
         // had an Open Library work key would hide the titles for a month after a
         // single book was added by ISBN alone.
-        if (fromWiki) setSeriesCache(db, cacheKey, cached);
+        if (cached.volumes?.length) setSeriesCache(db, cacheKey, cached);
       }
 
       const normalise = (value) =>

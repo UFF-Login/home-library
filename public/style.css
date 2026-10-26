@@ -529,3 +529,9 @@ button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
 .more-vol { color: var(--accent); font-variant-numeric: tabular-nums; font-size: 12px; }
 .more-title { color: var(--text); }
 .more-year { color: var(--muted); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.more-row { grid-template-columns: 42px 1fr 46px auto; }
+.more-add {
+  background: none; border: 0; color: var(--wish); font-size: 12px; cursor: pointer;
+  padding: 2px 4px; text-decoration: underline; white-space: nowrap;
+}
+.more-add:disabled { color: var(--muted); text-decoration: none; }
