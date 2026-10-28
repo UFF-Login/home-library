@@ -28,8 +28,15 @@ Edit `.env` and set the account the app should create:
 
 ```
 BOOKSHELF_USERNAME=admin
-BOOKSHELF_PASSWORD=a long password you will remember
+BOOKSHELF_PASSWORD='a long password you will remember'
 ```
+
+The quotes are not optional decoration: Compose treats an unquoted `$` as a
+variable reference and cuts the value there, so `ab$cd` becomes `ab` and the
+container ends up with a password that matches nothing you typed. A `#` after a
+space and a bare space cause the same truncation. Single quotes keep the value
+literal - use double quotes with `$$` only if the password itself contains a
+single quote.
 
 Both unset is also valid: the log then prints a one-time setup code and the
 account is created in the browser instead.
@@ -152,6 +159,7 @@ Also: the app's **More → Download catalogue** button gives the same data as JS
 | Container `unhealthy` | healthcheck cannot reach the app | `docker compose logs`; the healthcheck uses port 8080 *inside* the container, so a changed host port needs no change here |
 | `denied` on pull | package is private again | make it public, or `docker login ghcr.io` |
 | Forgot the password | scrypt hash is in the DB | set `BOOKSHELF_USERNAME`/`BOOKSHELF_PASSWORD` in `.env`, then `docker compose up -d` (**not** `restart` - env changes need a recreated container) |
+| "Wrong username or password" but the password is right, and the log shows a shorter length than you typed | `.env` was edited after the container was created, or the value contains `$` / space / `#` and Compose truncated it | quote it: `BOOKSHELF_PASSWORD='...'`, then `docker compose up -d --force-recreate` |
 | "Wrong username or password" but the password is right | the container has no account, or the account name differs | read the first log lines: `docker compose logs home-library \| grep "\[auth\]"` - they name the account in use, or say why the environment login was ignored |
 | Book found twice | different ISBNs for the same book (different editions) | that is real; each ISBN is a separate edition. Delete the duplicate. |
 
