@@ -187,14 +187,26 @@ test('environment credentials create the account, and always win on restart', ()
   assert.equal(steady.updated, undefined);
 });
 
-test('a too-short password in the environment is refused rather than half-applied', () => {
+test('the environment may choose a short password, but not an empty one', () => {
+  // An operator who sets a 5-character password gets that password. Refusing it
+  // was the bug: the server kept an older password while they typed the new one,
+  // and the app said "wrong username or password".
   const db = openDb(':memory:');
-  const result = withEnv(
+  const short = withEnv(
     { BOOKSHELF_USERNAME: 'operator', BOOKSHELF_PASSWORD: 'short' },
     () => ensureEnvAccount(db),
   );
-  assert.equal(result.problem, 'password_too_short');
-  assert.equal(countUsers(db), 0);
+  assert.equal(short.problem, null);
+  assert.equal(short.weak, true, 'still reported as weaker than the 8-character floor');
+  assert.equal(createAuth(db).login('operator', 'short', 'ip').ok, true);
+
+  // Blank, or shorter than 4, cannot be applied at all.
+  const blank = withEnv(
+    { BOOKSHELF_USERNAME: 'other', BOOKSHELF_PASSWORD: 'abc' },
+    () => ensureEnvAccount(db),
+  );
+  assert.equal(blank.problem, 'password_too_short');
+  assert.equal(countUsers(db), 1);
 });
 
 test('the in-app password change is refused when the environment owns the password', () => {

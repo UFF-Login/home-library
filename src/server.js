@@ -205,17 +205,41 @@ const db = openDb(join(DATA_DIR, 'bookshelf.db'));
 // account anywhere, the app asks the first visitor to create one, and only with
 // the one-time code printed below.
 const envAccount = ensureEnvAccount(db);
-if (envAccount.problem) {
-  console.error(
-    `[auth] BOOKSHELF_USERNAME/BOOKSHELF_PASSWORD ignored: ${envAccount.problem} ` +
-      `(a password needs at least 8 characters)`,
-  );
-}
 
 const auth = createAuth(db);
 
-const setupCode = auth.needsSetup() ? ensureSetupCode(db) : null;
-if (setupCode && !envAccount.configured) {
+/**
+ * One line, every start, saying exactly where the login comes from.
+ *
+ * "I set the password and it still says wrong password" has several causes that
+ * look identical from a browser: the container never got the variables, the
+ * password was refused, or the account in the database has a different name.
+ * This line is the answer, and it is the first thing to read in the log.
+ */
+if (envAccount.problem) {
+  console.error(
+    `[auth] environment login IGNORED: ${envAccount.problem} ` +
+      `(BOOKSHELF_USERNAME="${envAccount.username ?? ''}" could not be applied - ` +
+      'the password needs at least 4 characters)',
+  );
+} else if (envAccount.configured) {
+  const what = envAccount.created
+    ? 'account created from the environment'
+    : envAccount.updated
+      ? 'stored password replaced by the environment password'
+      : 'password matches the stored account';
+  console.log(`[auth] environment login active for "${envAccount.username}" - ${what}`);
+  if (envAccount.weak) {
+    console.warn('[auth] that password is shorter than 8 characters; consider a longer one');
+  }
+} else if (auth.needsSetup()) {
+  console.log('[auth] no environment login set; waiting for the first-run setup');
+} else {
+  console.log('[auth] no environment login; sign in with the account already in the database');
+}
+
+const setupCode = auth.needsSetup() && !envAccount.configured ? ensureSetupCode(db) : null;
+if (setupCode) {
   console.log('');
   console.log('  ==========================================');
   console.log('   First run. There is no account yet.');
@@ -223,8 +247,6 @@ if (setupCode && !envAccount.configured) {
   console.log('   Or set BOOKSHELF_USERNAME / BOOKSHELF_PASSWORD and restart.');
   console.log('  ==========================================');
   console.log('');
-} else if (envAccount.created || envAccount.updated) {
-  console.log(`[auth] account "${envAccount.username}" ${envAccount.created ? 'created' : 'password updated'} from the environment`);
 }
 
 const MIME = {
@@ -845,6 +867,12 @@ const server = http.createServer(async (req, res) => {
         // True when the password lives in the environment, so the UI can stop
         // offering a change that the next restart would undo.
         passwordManaged: passwordManagedByEnv(),
+        // The account name the server itself will accept (never the password).
+        // Shown on the login card so a typo in the username is visible instead
+        // of being reported as a wrong password.
+        serverAccount: envAccount.configured ? envAccount.username : null,
+        // Why the environment login could not be applied, if it could not.
+        envProblem: envAccount.problem ?? null,
         version: VERSION,
         build: BUILD,
         // Used to build cover URLs: when this changes, the phone refetches them.

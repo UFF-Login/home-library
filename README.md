@@ -111,7 +111,7 @@ with a token that has `read:packages`.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `BOOKSHELF_USERNAME` | none | Account name. Set with the password to create the account from the server. |
-| `BOOKSHELF_PASSWORD` | none | Password for that account (8+ characters). Applied on every restart, so it wins over an in-app change. |
+| `BOOKSHELF_PASSWORD` | none | Password for that account (4+ characters; 8+ recommended). Applied on every start, so it wins over an in-app change. |
 | `PORT` | `8080` | Listen port inside the container. |
 | `DATA_DIR` | `/data` | SQLite database + cover cache. Mount a volume. |
 | `TZ` | system | Only affects log timestamps. |

@@ -39,6 +39,8 @@ const SCRYPT = { N: 16384, r: 8, p: 1 };
 const KEY_BYTES = 64;
 
 export const MIN_PASSWORD = 8;
+/** The floor for a password that comes from the environment (see validateAccount). */
+export const ENV_MIN_PASSWORD = 4;
 const MAX_PASSWORD = 200;
 const MAX_USERNAME = 64;
 
@@ -84,8 +86,18 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(left, right);
 }
 
-/** Returns { ok, username, password } or { ok: false, reason } - never throws. */
-export function validateAccount({ username, password }) {
+/**
+ * Returns { ok, username, password } or { ok: false, reason } - never throws.
+ *
+ * `minPassword` exists because the two paths have different owners. A password
+ * typed into the app is held to MIN_PASSWORD. A password set in the
+ * environment was chosen deliberately by whoever runs the server, and refusing
+ * it meant the server quietly kept an older password while the operator kept
+ * typing the new one - reported as "wrong username or password", which points
+ * at the wrong thing entirely. The environment is therefore only rejected for a
+ * password that cannot work at all (blank, or shorter than 4).
+ */
+export function validateAccount({ username, password }, { minPassword = MIN_PASSWORD } = {}) {
   const name = String(username ?? '').trim();
   if (!name) return { ok: false, reason: 'username_required' };
   if (name.length > MAX_USERNAME) return { ok: false, reason: 'username_too_long' };
@@ -93,7 +105,8 @@ export function validateAccount({ username, password }) {
   if (/[\u0000-\u001f\u007f]/.test(name)) return { ok: false, reason: 'username_invalid' };
 
   const secret = String(password ?? '');
-  if (secret.length < MIN_PASSWORD) return { ok: false, reason: 'password_too_short' };
+  if (secret.trim().length === 0) return { ok: false, reason: 'password_required' };
+  if (secret.length < minPassword) return { ok: false, reason: 'password_too_short' };
   if (secret.length > MAX_PASSWORD) return { ok: false, reason: 'password_too_long' };
   return { ok: true, username: name, password: secret };
 }
@@ -112,19 +125,24 @@ export function ensureEnvAccount(db) {
   const password = String(process.env.BOOKSHELF_PASSWORD ?? '');
   if (!username || !password) return { configured: false, username: null, problem: null };
 
-  const checked = validateAccount({ username, password });
+  // The environment only needs a password that can exist at all: 4 characters.
+  // A shorter-than-ideal one is still applied, and reported as weak, because the
+  // alternative is the server ignoring the password the operator set and them
+  // typing it forever.
+  const checked = validateAccount({ username, password }, { minPassword: ENV_MIN_PASSWORD });
   if (!checked.ok) return { configured: true, username: null, problem: checked.reason };
 
+  const weak = password.length < MIN_PASSWORD;
   const existing = getUserByName(db, username);
   if (!existing) {
     createUser(db, { username: checked.username, passwordHash: hashPassword(password) });
-    return { configured: true, username: checked.username, problem: null, created: true };
+    return { configured: true, username: checked.username, problem: null, created: true, weak };
   }
   if (!verifyPassword(password, existing.password_hash)) {
     setUserPassword(db, existing.id, hashPassword(password));
-    return { configured: true, username: checked.username, problem: null, updated: true };
+    return { configured: true, username: checked.username, problem: null, updated: true, weak };
   }
-  return { configured: true, username: checked.username, problem: null };
+  return { configured: true, username: checked.username, problem: null, matches: true, weak };
 }
 
 /** True when the account password is dictated by the environment. */

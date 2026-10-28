@@ -151,7 +151,8 @@ Also: the app's **More → Download catalogue** button gives the same data as JS
 | `502 Bad Gateway` in NPM | wrong forward port/host | forward to the **host** port you published (8050, say) — not 8080 |
 | Container `unhealthy` | healthcheck cannot reach the app | `docker compose logs`; the healthcheck uses port 8080 *inside* the container, so a changed host port needs no change here |
 | `denied` on pull | package is private again | make it public, or `docker login ghcr.io` |
-| Forgot the password | scrypt hash is in the DB | set `BOOKSHELF_USERNAME`/`BOOKSHELF_PASSWORD` in `.env`, `docker compose up -d` |
+| Forgot the password | scrypt hash is in the DB | set `BOOKSHELF_USERNAME`/`BOOKSHELF_PASSWORD` in `.env`, then `docker compose up -d` (**not** `restart` - env changes need a recreated container) |
+| "Wrong username or password" but the password is right | the container has no account, or the account name differs | read the first log lines: `docker compose logs home-library \| grep "\[auth\]"` - they name the account in use, or say why the environment login was ignored |
 | Book found twice | different ISBNs for the same book (different editions) | that is real; each ISBN is a separate edition. Delete the duplicate. |
 
 ### Changing the host port

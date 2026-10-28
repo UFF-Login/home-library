@@ -31,6 +31,10 @@ const state = {
   // Who is signed in, and whether that password may be changed in the app.
   username: null,
   passwordManaged: false,
+  // The account name the server itself will accept, and why it could not apply
+  // the environment login at all (both shown on the sign-in card).
+  serverAccount: null,
+  envProblem: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -96,7 +100,39 @@ function showGate({ needsSetup = false } = {}) {
   $('tabs').hidden = true;
   $('gate-form').hidden = needsSetup;
   $('setup-form').hidden = !needsSetup;
+  renderGateHint();
   setTimeout(() => ($(needsSetup ? 'setup-code' : 'login-username')?.focus()), 60);
+}
+
+/**
+ * Say which account the server will actually accept.
+ *
+ * The failure this prevents: the password in `.env` is right, but the username
+ * typed into the box is not the one in the file (or the server never received
+ * the variables at all), and the app answers "wrong username or password" - so
+ * the password looks broken when it is the username or the container.
+ */
+function renderGateHint() {
+  const intro = $('gate-intro');
+  if (!intro) return;
+
+  if (state.envProblem) {
+    intro.innerHTML = `The login in the server's environment could not be used (<b>${esc(
+      state.envProblem,
+    )}</b>). A password needs at least 4 characters.`;
+    return;
+  }
+
+  if (state.serverAccount) {
+    intro.innerHTML = `Sign in as <b>${esc(state.serverAccount)}</b> — this account is set on the server.`;
+    // Prefill rather than guess: the name is not a secret, and a typo here reads
+    // as a wrong password.
+    const user = $('login-username');
+    if (user && !user.value) user.value = state.serverAccount;
+    return;
+  }
+
+  intro.textContent = 'Sign in to open your catalogue.';
 }
 
 const LOGIN_ERRORS = {
@@ -1566,6 +1602,8 @@ async function init() {
     state.coverEpoch = me.coverEpoch ?? 0;
     state.username = me.username ?? null;
     state.passwordManaged = Boolean(me.passwordManaged);
+    state.serverAccount = me.serverAccount ?? null;
+    state.envProblem = me.envProblem ?? null;
     if (me.authed) return boot();
     // No account exists yet: this is a first run, not a failed sign-in.
     return showGate({ needsSetup: Boolean(me.needsSetup) });
