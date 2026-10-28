@@ -73,6 +73,7 @@ import {
 import { stripHtml } from './util.js';
 import { ensureCover, coverFile, hasCover, coverMissPending, clearCoverMiss, clearAllCoverMisses, COVER_PIPELINE_VERSION } from './covers.js';
 import { decodeCoverImage, saveCoverBytes, removeCover, sniff } from './coverupload.js';
+import { loadEnvFiles } from './env.js';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(HERE, '..', 'public');
@@ -106,8 +107,17 @@ function formatVersion(raw) {
   return `v${match[1]}.${match[2]}`;
 }
 
+// `.env` next to the source, read before anything else looks at the environment.
+// Docker Compose applies this file itself; running with node does not, and the
+// difference was invisible until someone put BOOKSHELF_USERNAME there and the app
+// kept asking them to create an account. A real environment variable still wins.
+loadEnvFiles([join(HERE, '..', '.env')]);
+
 const BUILD = process.env.APP_BUILD || process.env.APP_VERSION || VERSION;
 const DATA_DIR = resolve(process.env.DATA_DIR ?? join(HERE, '..', 'data'));
+// A second file inside the data folder: in a container that is the mounted
+// volume, so an operator can drop credentials next to the database instead.
+loadEnvFiles([join(DATA_DIR, '.env')]);
 const PORT = Number(process.env.PORT ?? 8080);
 const HOST = process.env.HOST ?? '0.0.0.0';
 

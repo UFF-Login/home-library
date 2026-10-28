@@ -138,3 +138,15 @@ the window.
 
 *Change if:* a dashboard-style multi-pane view is wanted; that is a different
 layout, not a wider one.
+
+## 14. `.env` is read by the server too, not only by Compose
+
+Compose applies `.env` itself; `node src/server.js` does not. The difference was
+invisible until someone put their login in `.env`, ran the app with node, and got
+"wrong username or password" on a correct password.
+
+The server now loads `./.env` (and `$DATA_DIR/.env`, which is the mounted volume
+in a container) before it looks at any setting. A real environment variable still
+wins, and the parser reports which keys were skipped - the answer to "why is my
+`.env` being ignored?". Only the Compose subset is supported: comments, `KEY=value`,
+optional quotes, optional `export`.

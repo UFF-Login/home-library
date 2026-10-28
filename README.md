@@ -181,9 +181,9 @@ phone browser ──HTTPS──> reverse proxy ──> container :8080
 ## Development
 
 ```bash
-npm test                 # 75 tests, no network, no Docker
+npm test                 # 79 tests, no network, no Docker
 npm run dev              # watch mode on :8080
-BOOKSHELF_USERNAME=dev BOOKSHELF_PASSWORD=dev-password DATA_DIR=./data npm start
+DATA_DIR=./data npm start   # login read from ./.env, exactly like Compose
 npm run icons            # regenerate PWA icons
 npm run vendor           # re-copy zxing from node_modules
 ```
