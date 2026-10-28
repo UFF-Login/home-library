@@ -121,3 +121,20 @@ cover route already serves, and the cover epoch is bumped so year-long phone
 caches fetch the new picture.
 
 *Change if:* a real image pipeline is ever needed (thumbnails, EXIF rotation).
+
+## 13. One fluid layout, capped tracks, no page-width ceiling
+
+The desktop layout used to stop at 1500px of content, which on a 3440px monitor
+left a third of the screen empty. There is now no ceiling: the shelf fills the
+window, and the *tracks* carry the limit instead (`minmax(176px, 232px)`), so
+covers stay a consistent size whether there are 6 books or 600. Controls that
+gain nothing from width - the search field, a scan result - keep a readable
+measure rather than stretching.
+
+Breakpoints: <700px phone (bottom tabs, 620px column), 700-999px tablet (900px
+column, bottom tabs, dialog sheets), >=1000px left rail replaces the tab bar and
+content uses the full width, >=1600px larger covers and a gutter that grows with
+the window.
+
+*Change if:* a dashboard-style multi-pane view is wanted; that is a different
+layout, not a wider one.
