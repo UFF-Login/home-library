@@ -228,7 +228,14 @@ if (envAccount.problem) {
     : envAccount.updated
       ? 'stored password replaced by the environment password'
       : 'password matches the stored account';
-  console.log(`[auth] environment login active for "${envAccount.username}" - ${what}`);
+  // The length is logged on purpose. "I set an 18-character password and it says
+  // wrong password" is almost always a stale container holding the previous
+  // value; the length is the one fact that tells those apart without printing a
+  // secret. The password itself is never logged.
+  console.log(
+    `[auth] environment login active for "${envAccount.username}" - ${what} ` +
+      `(password: ${envAccount.passwordLength} characters)`,
+  );
   if (envAccount.weak) {
     console.warn('[auth] that password is shorter than 8 characters; consider a longer one');
   }

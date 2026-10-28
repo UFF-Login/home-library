@@ -133,16 +133,20 @@ export function ensureEnvAccount(db) {
   if (!checked.ok) return { configured: true, username: null, problem: checked.reason };
 
   const weak = password.length < MIN_PASSWORD;
+  // Reported (never the value) so a stale container can be told apart from a
+  // wrong password by comparing this number with the one being typed.
+  const passwordLength = password.length;
+
   const existing = getUserByName(db, username);
   if (!existing) {
     createUser(db, { username: checked.username, passwordHash: hashPassword(password) });
-    return { configured: true, username: checked.username, problem: null, created: true, weak };
+    return { configured: true, username: checked.username, problem: null, created: true, weak, passwordLength };
   }
   if (!verifyPassword(password, existing.password_hash)) {
     setUserPassword(db, existing.id, hashPassword(password));
-    return { configured: true, username: checked.username, problem: null, updated: true, weak };
+    return { configured: true, username: checked.username, problem: null, updated: true, weak, passwordLength };
   }
-  return { configured: true, username: checked.username, problem: null, matches: true, weak };
+  return { configured: true, username: checked.username, problem: null, matches: true, weak, passwordLength };
 }
 
 /** True when the account password is dictated by the environment. */
