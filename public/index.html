@@ -24,23 +24,88 @@
     />
   </head>
   <body>
-    <!-- Login gate: only visible until the session cookie is accepted. -->
+    <!-- Login gate: only visible until the session cookie is accepted.
+         Two cards share this surface - sign in, and (on a brand new install)
+         create the account. Never both at once. -->
     <div id="gate" class="gate" hidden>
       <form id="gate-form" class="gate-card">
         <h1>Home Library</h1>
-        <p>Enter your PIN to unlock the catalogue.</p>
+        <p>Sign in to open your catalogue.</p>
+        <label class="sr-only" for="login-username">Username</label>
         <input
-          id="pin"
+          id="login-username"
+          type="text"
+          autocomplete="username"
+          autocapitalize="none"
+          autocorrect="off"
+          spellcheck="false"
+          placeholder="Username"
+          maxlength="64"
+          required
+        />
+        <label class="sr-only" for="login-password">Password</label>
+        <input
+          id="login-password"
           type="password"
-          inputmode="numeric"
           autocomplete="current-password"
-          placeholder="PIN"
+          placeholder="Password"
+          maxlength="200"
+          required
+        />
+        <button type="submit" class="primary">Sign in</button>
+        <p id="gate-error" class="error" role="alert"></p>
+        <p class="version gate-version" id="gate-version">v—</p>
+      </form>
+
+      <form id="setup-form" class="gate-card" hidden>
+        <h1>Create your account</h1>
+        <p>
+          This library has no account yet. The setup code is printed in the server log
+          (<code>docker compose logs</code>).
+        </p>
+        <label class="sr-only" for="setup-code">Setup code</label>
+        <input
+          id="setup-code"
+          type="text"
+          autocomplete="one-time-code"
+          autocapitalize="characters"
+          spellcheck="false"
+          placeholder="Setup code"
           maxlength="12"
           required
         />
-        <button type="submit" class="primary">Unlock</button>
-        <p id="gate-error" class="error" role="alert"></p>
-        <p class="version gate-version" id="gate-version">v—</p>
+        <label class="sr-only" for="setup-username">Username</label>
+        <input
+          id="setup-username"
+          type="text"
+          autocomplete="username"
+          autocapitalize="none"
+          spellcheck="false"
+          placeholder="Choose a username"
+          maxlength="64"
+          required
+        />
+        <label class="sr-only" for="setup-password">Password</label>
+        <input
+          id="setup-password"
+          type="password"
+          autocomplete="new-password"
+          placeholder="Choose a password (8+ characters)"
+          maxlength="200"
+          required
+        />
+        <label class="sr-only" for="setup-confirm">Repeat password</label>
+        <input
+          id="setup-confirm"
+          type="password"
+          autocomplete="new-password"
+          placeholder="Repeat the password"
+          maxlength="200"
+          required
+        />
+        <button type="submit" class="primary">Create account</button>
+        <p id="setup-error" class="error" role="alert"></p>
+        <p class="version gate-version" id="setup-version">v—</p>
       </form>
     </div>
 
@@ -151,12 +216,32 @@
           <div id="recent-scans" class="recent"></div>
         </div>
         <div class="panel">
-          <h2>Session</h2>
+          <h2>Account</h2>
+          <p class="hint" style="margin:0">Signed in as <b id="account-name">—</b></p>
+          <p class="hint" id="account-note" style="margin:0" hidden>
+            The password is set by the server's environment (BOOKSHELF_PASSWORD), so it can only be
+            changed there.
+          </p>
+          <div id="password-block">
+            <div class="field">
+              <label for="pw-current">Current password</label>
+              <input id="pw-current" type="password" autocomplete="current-password" />
+            </div>
+            <div class="field">
+              <label for="pw-next">New password (8+ characters)</label>
+              <input id="pw-next" type="password" autocomplete="new-password" />
+            </div>
+            <button id="btn-password" class="ghost">Change password</button>
+            <div id="password-status" class="hint" style="margin:0"></div>
+          </div>
+          <button id="btn-signout" class="ghost">Sign out</button>
+        </div>
+        <div class="panel">
+          <h2>Data sources</h2>
           <p class="hint" id="sources-status" style="margin:0"></p>
           <button id="btn-test-google" class="ghost">Test Google Books key</button>
           <div id="google-test" class="hint" style="margin:0"></div>
           <button id="btn-refresh" class="ghost">Check for updates</button>
-          <button id="btn-logout" class="ghost">Lock the app</button>
         </div>
       </section>
     </main>

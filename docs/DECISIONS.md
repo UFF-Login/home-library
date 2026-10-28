@@ -66,3 +66,58 @@ volume), which is acceptable for a single-user app.
 The container speaks plain HTTP on 8080 and trusts `X-Forwarded-Proto` for the
 cookie `Secure` flag. This matches the existing Nginx Proxy Manager / Traefik
 setup on the server.
+
+## 9. Accounts are username + password with scrypt, not a shared PIN
+
+A 6-digit PIN is 10^6 guesses; with no per-account identity it also cannot be
+attributed, cannot be changed per person, and cannot be revoked for one device.
+
+- Passwords are hashed with scrypt (N=16384, r=8, p=1) and a 16-byte random salt
+  per user, stored as `scrypt$N$r$p$salt$hash` so the parameters travel with the
+  hash and can be raised later without invalidating old passwords.
+- A login for an unknown username runs the same scrypt work as a wrong password
+  (against a dummy hash) and reports the same reason, so response time and text
+  cannot be used to enumerate usernames.
+- The session cookie is `userId.expiry.HMAC`, signed with a secret in `meta`.
+  Rotating that secret (what "change password" does) signs every device out at
+  once - the one thing a PIN-only scheme could not do.
+
+*Change if:* multi-user support is wanted (the `users` table already allows it;
+only the UI and per-user data scoping are missing).
+
+## 10. The first account is claimed with a one-time setup code
+
+The app is reachable through a tunnel, so "first visitor becomes admin" would hand
+the library to whoever loads the page first. While the `users` table is empty the
+server prints a 6-character code in its log and `/api/setup` refuses without it;
+the code is deleted once the account exists, and setup is refused entirely after
+that.
+
+Setting `BOOKSHELF_USERNAME`/`BOOKSHELF_PASSWORD` skips the code: the operator
+already has shell access to the server, which is stronger proof than a code.
+
+*Change if:* a second account is needed (then invite codes, not this path).
+
+## 11. Hand edits are a plain overwrite; enrichment still only fills blanks
+
+`updateWork()` writes exactly the columns a person typed, including
+`author_key`/`series_key`, which are recomputed so grouping and gap maths follow
+the correction immediately. `saveBook()` (the enrichment and re-add path) still
+only fills empty columns, so a later metadata refresh cannot undo an edit.
+
+Editable columns are a whitelist in `db.js`; the key is used as a column name in
+the UPDATE, so anything outside the list never reaches the SQL.
+
+## 12. Uploaded covers are re-encoded in the browser, sniffed on the server
+
+The chosen file is drawn to a canvas (longest edge 1200px, white background) and
+sent as a base64 JPEG. This keeps the zero-dependency promise: no image library,
+no multipart parser, and a 12MB phone photo arrives as ~150KB.
+
+The server does not trust that claim - `sniff()` reads the magic bytes and stores
+the file with a content type derived from the bytes, so a PNG or WebP uploaded by
+another client is served as what it actually is. Uploads land at the same path the
+cover route already serves, and the cover epoch is bumped so year-long phone
+caches fetch the new picture.
+
+*Change if:* a real image pipeline is ever needed (thumbnails, EXIF rotation).

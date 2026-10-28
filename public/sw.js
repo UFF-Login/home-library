@@ -18,7 +18,7 @@ const SHELL = [
   '/vendor/zxing.min.js',
 ];
 
-const VERSION = 'v5';
+const VERSION = 'v6';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

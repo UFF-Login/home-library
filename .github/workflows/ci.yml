@@ -26,7 +26,7 @@ jobs:
 
       - name: Boot the server and hit the health endpoint
         run: |
-          BOOKSHELF_PIN=123456 PORT=8080 DATA_DIR=/tmp/bsdata node src/server.js &
+          BOOKSHELF_USERNAME=ci BOOKSHELF_PASSWORD=ci-password PORT=8080 DATA_DIR=/tmp/bsdata node src/server.js &
           SERVER_PID=$!
           for i in $(seq 1 20); do
             if curl -sf http://127.0.0.1:8080/healthz; then ready=1; break; fi

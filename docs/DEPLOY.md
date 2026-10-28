@@ -16,7 +16,7 @@ mkdir -p ~/docker/home-library && cd ~/docker/home-library
 ## 2. Get the two files
 
 Download the shipped compose file rather than retyping it — it is the one CI
-builds against — then create the `.env` file that holds your PIN:
+builds against — then create the `.env` file that holds your login:
 
 ```bash
 curl -fsSL -O https://raw.githubusercontent.com/UFF-Login/home-library/main/docker-compose.yml
@@ -24,25 +24,30 @@ curl -fsSL -o .env.example https://raw.githubusercontent.com/UFF-Login/home-libr
 cp .env.example .env
 ```
 
-Edit `.env` and set your PIN:
+Edit `.env` and set the account the app should create:
 
 ```
-BOOKSHELF_PIN=482913
+BOOKSHELF_USERNAME=admin
+BOOKSHELF_PASSWORD=a long password you will remember
 ```
+
+Both unset is also valid: the log then prints a one-time setup code and the
+account is created in the browser instead.
 
 Two files, two jobs:
 
 | File | Committed to git? | Holds |
 | --- | --- | --- |
 | `docker-compose.yml` | yes | image, port, volume, healthcheck |
-| `.env` | **never** | your PIN |
+| `.env` | **never** | your login |
 
 Why split: the compose file is public on GitHub. Docker Compose reads `.env`
 automatically from the folder it runs in, so the secret never needs to be typed
 into a file that gets published.
 
-If `.env` is missing entirely, the app generates a PIN and prints it once:
-`docker compose logs | grep -i pin`.
+If `.env` is missing entirely, the app prints a one-time setup code on first
+start: `docker compose logs | grep -i "setup code"`. Enter it in the browser and
+choose a username and password.
 
 The service, container and data folder are all named `home-library`, the port is
 `8080`, and the catalogue lives in `./data`.
@@ -60,7 +65,7 @@ echo <TOKEN> | docker login ghcr.io -u UFF-Login --password-stdin
 ```
 
 A public *image* does not expose your catalogue — that lives only in `./data` on
-your server, behind the PIN.
+your server, behind the login.
 
 ## 4. Start
 
@@ -70,7 +75,7 @@ docker compose ps          # wait for (healthy)
 docker compose logs --tail=20
 ```
 
-If `BOOKSHELF_PIN` is unset, the log prints a generated PIN once.
+If `BOOKSHELF_USERNAME`/`BOOKSHELF_PASSWORD` are unset, the log prints a one-time setup code.
 
 ---
 
@@ -111,7 +116,7 @@ cookie `Secure`. Remove the `ports:` block if Traefik shares the network.
 ## 6. Check it from the phone
 
 1. Open `https://books.yourdomain.com` — the padlock must be there.
-2. PIN in. Scan tab should ask for camera permission.
+2. Signed in. Scan tab should ask for camera permission.
 3. If the camera area stays black: it is almost always **not HTTPS**, or the
    browser was opened over a cached `http://` URL. Check the padlock first.
 
@@ -146,7 +151,7 @@ Also: the app's **More → Download catalogue** button gives the same data as JS
 | `502 Bad Gateway` in NPM | wrong forward port/host | forward to the **host** port you published (8050, say) — not 8080 |
 | Container `unhealthy` | healthcheck cannot reach the app | `docker compose logs`; the healthcheck uses port 8080 *inside* the container, so a changed host port needs no change here |
 | `denied` on pull | package is private again | make it public, or `docker login ghcr.io` |
-| Forgot the PIN | PIN hash is in the DB | set `BOOKSHELF_PIN` in `.env`, `docker compose up -d` |
+| Forgot the password | scrypt hash is in the DB | set `BOOKSHELF_USERNAME`/`BOOKSHELF_PASSWORD` in `.env`, `docker compose up -d` |
 | Book found twice | different ISBNs for the same book (different editions) | that is real; each ISBN is a separate edition. Delete the duplicate. |
 
 ### Changing the host port

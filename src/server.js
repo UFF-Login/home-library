@@ -7,7 +7,19 @@
 //    shop with bad signal must not leave the UI hanging;
 //  - the frontend is served from here, so the container is the whole app.
 import http from 'node:http';
-import { createReadStream, existsSync, mkdirSync, accessSync, readFileSync, writeFileSync, rmSync, constants as fsConstants } from 'node:fs';
+import {
+  createReadStream,
+  existsSync,
+  mkdirSync,
+  accessSync,
+  readFileSync,
+  writeFileSync,
+  rmSync,
+  openSync,
+  readSync,
+  closeSync,
+  constants as fsConstants,
+} from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { join, extname, resolve, normalize, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +55,7 @@ import {
   coverEpoch,
   getSeriesCache,
   setSeriesCache,
+  updateWork,
 } from './db.js';
 import { normaliseIsbn } from './isbn.js';
 import { missingVolumes, describeMissing, seriesKey, parseSeries } from './series.js';
@@ -50,9 +63,16 @@ import { seriesFromWikidata, seriesVolumes } from './wikidata.js';
 import { googleBooksLookup, googleBooksProbe, googleBooksKey, googleBooksSearch } from './googlebooks.js';
 import { authorKey } from './authors.js';
 import { lookupIsbn, fetchRating } from './lookup.js';
-import { ensurePin, createAuth, parseCookies } from './auth.js';
+import {
+  createAuth,
+  parseCookies,
+  ensureEnvAccount,
+  ensureSetupCode,
+  passwordManagedByEnv,
+} from './auth.js';
 import { stripHtml } from './util.js';
 import { ensureCover, coverFile, hasCover, coverMissPending, clearCoverMiss, clearAllCoverMisses, COVER_PIPELINE_VERSION } from './covers.js';
+import { decodeCoverImage, saveCoverBytes, removeCover, sniff } from './coverupload.js';
 
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const PUBLIC_DIR = join(HERE, '..', 'public');
@@ -171,16 +191,30 @@ const db = openDb(join(DATA_DIR, 'bookshelf.db'));
     if (cleared) console.log(`[covers] cleared ${cleared} stale "no cover" marker(s)`);
   }
 }
-const { generated } = ensurePin(db);
+// The account. Environment credentials win (and are the recovery path); with no
+// account anywhere, the app asks the first visitor to create one, and only with
+// the one-time code printed below.
+const envAccount = ensureEnvAccount(db);
+if (envAccount.problem) {
+  console.error(
+    `[auth] BOOKSHELF_USERNAME/BOOKSHELF_PASSWORD ignored: ${envAccount.problem} ` +
+      `(a password needs at least 8 characters)`,
+  );
+}
+
 const auth = createAuth(db);
 
-if (generated) {
+const setupCode = auth.needsSetup() ? ensureSetupCode(db) : null;
+if (setupCode && !envAccount.configured) {
   console.log('');
   console.log('  ==========================================');
-  console.log(`   First run. Your PIN is:  ${generated}`);
-  console.log('   Set BOOKSHELF_PIN in docker-compose to choose your own.');
+  console.log('   First run. There is no account yet.');
+  console.log(`   Open the app and create one. Setup code:  ${setupCode}`);
+  console.log('   Or set BOOKSHELF_USERNAME / BOOKSHELF_PASSWORD and restart.');
   console.log('  ==========================================');
   console.log('');
+} else if (envAccount.created || envAccount.updated) {
+  console.log(`[auth] account "${envAccount.username}" ${envAccount.created ? 'created' : 'password updated'} from the environment`);
 }
 
 const MIME = {
@@ -546,6 +580,84 @@ function pickFields(body = {}) {
   return fields;
 }
 
+/** A one-line text field: trimmed, whitespace collapsed, capped. Blank -> null. */
+function shortText(value, max = 160) {
+  if (value === undefined) return undefined;
+  const clean = String(value ?? '').trim().replace(/\s+/g, ' ').slice(0, max);
+  return clean || null;
+}
+
+/**
+ * The book's own data, as the person typed it.
+ *
+ * Everything a provider supplied is editable, because providers are wrong often
+ * enough that a catalogue you cannot correct is a catalogue you stop trusting.
+ * A title cannot be blanked (a nameless row is unusable), and each value is
+ * capped rather than trusted, so a stray paste cannot bloat the database.
+ *
+ * Throws Error('...') on a value that cannot be stored; the caller turns that
+ * into a 400 with the reason.
+ */
+function pickWorkPatch(body = {}) {
+  const patch = {};
+
+  if (body.title !== undefined) {
+    const title = String(body.title ?? '').trim().replace(/\s+/g, ' ').slice(0, 300);
+    if (!title) throw new Error('title_required');
+    patch.title = title;
+  }
+  if (body.subtitle !== undefined) patch.subtitle = shortText(body.subtitle, 300);
+
+  // One author field in the UI, a list in the database: "Stine, RL" and a form
+  // listing two names both arrive here.
+  if (body.authors !== undefined || body.author !== undefined) {
+    const source = Array.isArray(body.authors)
+      ? body.authors
+      : String(body.authors ?? body.author ?? '').split(',');
+    const list = source
+      .map((name) => String(name ?? '').trim().replace(/\s+/g, ' ').slice(0, 120))
+      .filter(Boolean);
+    patch.authors = list.length ? JSON.stringify(list) : null;
+    patch.author_key = list[0] ? authorKey(list[0]) : null;
+  }
+
+  if (body.publisher !== undefined) patch.publisher = shortText(body.publisher);
+  if (body.published !== undefined) patch.published = shortText(body.published, 40);
+
+  if (body.pages !== undefined) {
+    const raw = String(body.pages ?? '').trim();
+    if (!raw) patch.pages = null;
+    else {
+      const pages = Number(raw);
+      if (!Number.isFinite(pages) || pages <= 0 || pages > 100_000) throw new Error('pages_invalid');
+      patch.pages = Math.round(pages);
+    }
+  }
+
+  if (body.description !== undefined) {
+    const text = String(body.description ?? '').trim().slice(0, 20_000);
+    patch.description = text || null;
+  }
+
+  // Series changes rewrite the grouping key too, or the gap maths would keep
+  // using the old name.
+  if (body.series !== undefined) {
+    patch.series = shortText(body.series, 120);
+    patch.series_key = seriesKey(patch.series);
+  }
+  if (body.volume !== undefined) {
+    const raw = String(body.volume ?? '').trim();
+    if (!raw) patch.volume = null;
+    else {
+      const volume = Number(raw);
+      if (!Number.isFinite(volume) || volume < 0 || volume > 10_000) throw new Error('volume_invalid');
+      patch.volume = volume;
+    }
+  }
+
+  return patch;
+}
+
 async function serveStatic(req, res, pathname) {
   // Path-based asset versioning: /v/<build>/app.js serves public/app.js.
   // A query string (?v=) was the first attempt, but a reverse proxy in front of
@@ -602,6 +714,21 @@ function normaliseTitle(value) {
     .trim();
 }
 
+/** Content type of a file on disk, from its first bytes. Null when unknown. */
+function sniffFile(path) {
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+    const head = Buffer.alloc(16);
+    const read = readSync(fd, head, 0, 16, 0);
+    return sniff(head.subarray(0, read));
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 async function serveCover(req, res, isbn13) {
   if (!/^\d{13}$/.test(isbn13)) return json(res, 400, { error: 'bad isbn' });
   const row = db
@@ -625,7 +752,9 @@ async function serveCover(req, res, isbn13) {
   }
   const info = await stat(coverFile(DATA_DIR, isbn13));
   res.writeHead(200, {
-    'content-type': 'image/jpeg',
+    // Fetched covers are JPEG, but a picture the person uploaded may be a PNG:
+    // read the first bytes instead of claiming a type the browser will reject.
+    'content-type': sniffFile(file) ?? 'image/jpeg',
     'content-length': info.size,
     // A catalogue book's cover is final (and the epoch in the URL covers refetches).
     // A preview for a book that is not in the library is not: it may vanish with
@@ -658,21 +787,39 @@ const server = http.createServer(async (req, res) => {
     }
 
     const cookies = parseCookies(req.headers.cookie);
-    const authed = auth.isAuthed(cookies);
+    const session = auth.isAuthed(cookies);
+    const authed = Boolean(session);
+
+    /** Sets the session cookie for this device. */
+    const setSession = (cookie) =>
+      res.setHeader(
+        'set-cookie',
+        `${cookie}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax${isSecure(req) ? '; Secure' : ''}`,
+      );
 
     // ---- auth endpoints (the only unauthenticated API surface) ----
     if (pathname === '/api/login' && method === 'POST') {
       const body = await readBody(req);
-      const result = auth.login(body.pin, clientIp(req));
+      const result = auth.login(body.username, body.password, clientIp(req));
       if (!result.ok) {
         const status = result.reason === 'too_many_attempts' ? 429 : 401;
         return json(res, status, { error: result.reason });
       }
-      res.setHeader(
-        'set-cookie',
-        `${result.cookie}; Path=/; Max-Age=2592000; HttpOnly; SameSite=Lax${isSecure(req) ? '; Secure' : ''}`,
+      setSession(result.cookie);
+      return json(res, 200, { ok: true, username: result.username });
+    }
+    if (pathname === '/api/setup' && method === 'POST') {
+      // First run only: creating the account that will own this library.
+      const body = await readBody(req);
+      const result = auth.setup(
+        { username: body.username, password: body.password, code: body.code },
+        clientIp(req),
       );
-      return json(res, 200, { ok: true });
+      if (!result.ok) {
+        return json(res, result.reason === 'already_setup' ? 409 : 400, { error: result.reason });
+      }
+      setSession(result.cookie);
+      return json(res, 201, { ok: true, username: result.username });
     }
     if (pathname === '/api/logout' && method === 'POST') {
       res.setHeader('set-cookie', auth.clearCookie());
@@ -681,6 +828,13 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/me') {
       return json(res, 200, {
         authed,
+        username: session?.username ?? null,
+        // Drives the first-run screen: an empty users table is the only state
+        // in which an account can be created from the browser.
+        needsSetup: auth.needsSetup(),
+        // True when the password lives in the environment, so the UI can stop
+        // offering a change that the next restart would undo.
+        passwordManaged: passwordManagedByEnv(),
         version: VERSION,
         build: BUILD,
         // Used to build cover URLs: when this changes, the phone refetches them.
@@ -690,6 +844,21 @@ const server = http.createServer(async (req, res) => {
 
     // ---- everything else under /api requires a session ----
     if (pathname.startsWith('/api/') && !authed) return json(res, 401, { error: 'auth_required' });
+
+    if (pathname === '/api/account/password' && method === 'POST') {
+      const body = await readBody(req);
+      const result = auth.changePassword({
+        userId: session.userId,
+        current: body.current,
+        next: body.next,
+      });
+      if (!result.ok) {
+        const status = result.reason === 'managed_by_env' ? 409 : 400;
+        return json(res, status, { error: result.reason });
+      }
+      setSession(result.cookie);
+      return json(res, 200, { ok: true });
+    }
 
     if (pathname === '/api/books' && method === 'GET') {
       const rows = listBooks(db, {
@@ -812,21 +981,16 @@ const server = http.createServer(async (req, res) => {
         const current = findBook(db, isbn13);
         if (!current) return json(res, 404, { error: 'not found' });
 
-        // Series/volume edits are allowed here because the API data is often
-        // wrong, and a wrong series would corrupt the gap maths.
-        if (body.series !== undefined || body.volume !== undefined) {
-          const series = body.series === undefined ? current.series : body.series;
-          const volume = body.volume === undefined ? current.volume : body.volume;
-          db.prepare(
-            'UPDATE works SET series = ?, series_key = ?, volume = ?, updated_at = ? WHERE id = ?',
-          ).run(
-            series || null,
-            seriesKey(series),
-            volume === null || volume === '' ? null : Number(volume),
-            new Date().toISOString(),
-            current.workId,
-          );
+        // Every field of the book itself is correctable: title, authors,
+        // publisher, year, pages, blurb, series and volume. The provider data is
+        // often wrong, and a wrong series would corrupt the gap maths.
+        let patch;
+        try {
+          patch = pickWorkPatch(body);
+        } catch (error) {
+          return json(res, 400, { error: error?.message ?? 'invalid_value' });
         }
+        if (Object.keys(patch).length) updateWork(db, current.workId, patch);
 
         const fields = pickFields(body);
         const updated = saveBook(db, {
@@ -845,6 +1009,66 @@ const server = http.createServer(async (req, res) => {
         const row = findBook(db, isbn13);
         if (!row) return json(res, 404, { error: 'not found' });
         return json(res, 200, { book: wrapBook(row) });
+      }
+    }
+
+    /**
+     * Replace a cover with your own picture.
+     *
+     * The body is JSON with base64 image data, not multipart: the app has no
+     * dependencies, and the browser already re-encodes the chosen file to a
+     * canvas-sized JPEG before sending it. The server still sniffs the bytes.
+     */
+    const coverUploadMatch = /^\/api\/books\/(\d{13})\/cover$/.exec(pathname);
+    if (coverUploadMatch) {
+      const isbn13 = coverUploadMatch[1];
+      const current = findBook(db, isbn13);
+      if (!current) return json(res, 404, { error: 'not found' });
+
+      if (method === 'POST') {
+        const body = await readBody(req, 12_000_000);
+        const decoded = decodeCoverImage(body.image ?? body.data);
+        if (decoded.error) {
+          return json(res, 400, {
+            error: decoded.error,
+            detail:
+              decoded.error === 'too_large'
+                ? 'The picture is too big (5 MB max).'
+                : decoded.error === 'too_small'
+                  ? 'That picture is too small to be a cover.'
+                  : 'That file is not an image.',
+          });
+        }
+        try {
+          saveCoverBytes(DATA_DIR, isbn13, decoded.bytes);
+        } catch (error) {
+          console.error('[covers] upload failed', isbn13, error?.message ?? error);
+          return json(res, 500, { error: 'cover_write_failed' });
+        }
+        // Every cover URL carries the epoch, so bumping it makes phones and
+        // browsers ask again instead of showing the year-cached old artwork.
+        const epoch = bumpCoverEpoch(db);
+        return json(res, 200, {
+          ok: true,
+          cover: `/cover/${isbn13}.jpg`,
+          epoch,
+          bytes: decoded.bytes.length,
+          type: decoded.mime,
+        });
+      }
+
+      if (method === 'DELETE') {
+        // Back to the catalogue's own artwork: drop the file and let the next
+        // request fetch a fresh one.
+        removeCover(DATA_DIR, isbn13);
+        clearCoverMiss(DATA_DIR, isbn13);
+        const epoch = bumpCoverEpoch(db);
+        await ensureCover(DATA_DIR, {
+          isbn13,
+          coverId: current.coverId,
+          coverUrl: current.coverUrl,
+        }).catch(() => null);
+        return json(res, 200, { ok: true, epoch });
       }
     }
 
@@ -1166,7 +1390,9 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/settings' && method === 'GET') {
       return json(res, 200, {
         dataDir: DATA_DIR,
-        hasPinFromEnv: Boolean(process.env.BOOKSHELF_PIN),
+        username: session?.username ?? null,
+        // The password comes from the environment, so it cannot be changed here.
+        passwordManaged: passwordManagedByEnv(),
         version: VERSION,
         build: BUILD,
         // Tells the operator whether the optional Google Books key is wired up.

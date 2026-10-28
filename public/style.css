@@ -12,6 +12,10 @@
   --warn: #e06a6a;
   --radius: 16px;
   --tab-h: 64px;
+  /* Layout tokens, replaced per breakpoint. One place to change the column. */
+  --content-max: 620px;
+  --pad: 16px;
+  --rail: 232px;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -126,11 +130,18 @@ button:active { transform: scale(0.985); }
 .title { font-size: 22px; }
 .topbar-count { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; text-align: right; }
 
-.view { display: none; padding: 0 16px calc(var(--tab-h) + env(safe-area-inset-bottom) + 16px); }
+.view { display: none; padding: 0 var(--pad) calc(var(--tab-h) + env(safe-area-inset-bottom) + 16px); }
 .view.active { display: block; }
 
-/* Phone-first, but do not stretch the phone layout across a monitor. */
-#app { max-width: 620px; margin: 0 auto; }
+/* Phone-first, but never a phone column stranded in the middle of a monitor.
+   --content-max and --pad are redefined at the breakpoints below, and the wide
+   layout drops the cap entirely: on a 34" screen the shelf should use the
+   screen, not two thirds of it. */
+#app {
+  max-width: var(--content-max);
+  margin-inline: auto;
+  width: 100%;
+}
 
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
@@ -379,12 +390,32 @@ button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
 .field label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .inline-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-/* Desktop: keep the phone column centred instead of stretching to the window.
-   Declared last so these `left`/`transform` values win over .tabs' own rules. */
+/* ---------- tablet: widen the column, keep the phone chrome ----------
+   Between 700px and 1000px a 620px phone column is the worst case: too narrow to
+   use the width, too wide to feel like a phone. The column grows, the shelves
+   gain columns, and the sheet becomes a dialog. */
 @media (min-width: 700px) {
-  .tabs { max-width: 620px; left: 50%; transform: translateX(-50%); border-radius: 16px 16px 0 0; }
-  .topbar { max-width: 620px; margin: 0 auto; }
-  .sheet { max-width: 620px; left: 50%; transform: translateX(-50%); border-radius: 20px 20px 0 0; }
+  :root { --content-max: 900px; --pad: 24px; }
+
+  .tabs {
+    max-width: var(--content-max);
+    left: 50%; transform: translateX(-50%);
+    border-radius: 16px 16px 0 0;
+    border-left: 1px solid var(--line); border-right: 1px solid var(--line);
+  }
+  .topbar { max-width: var(--content-max); margin-inline: auto; }
+  .sheet {
+    max-width: min(760px, calc(100vw - 48px));
+    left: 50%; transform: translateX(-50%);
+    bottom: 3vh; max-height: 92vh;
+    /* The top padding the phone gets from the grip bar has to come from
+       somewhere else once the grip is hidden. */
+    padding: 20px 22px calc(env(safe-area-inset-bottom) + 20px);
+    border-radius: 20px; border: 1px solid var(--line);
+  }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(126px, 1fr)); gap: 16px; }
+  .sheet-grip { display: none; }
+  .toast { bottom: calc(var(--tab-h) + env(safe-area-inset-bottom) + 24px); }
 }
 
 /* ================= wide screens =================
@@ -393,15 +424,17 @@ button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
    bar, content is left-aligned in a wide column, and the scan view splits into
    camera beside result. Below 1000px nothing here applies. */
 @media (min-width: 1000px) {
+  /* No max-width here: the content uses whatever the window has. A cap was what
+     left a third of an ultrawide monitor empty. */
   #app {
     max-width: none;
-    padding-left: 232px; /* room for the rail */
+    padding-left: var(--rail); /* room for the rail */
   }
 
   /* The tab bar becomes a persistent left rail: four large targets, always visible. */
   .tabs {
     top: 0; right: auto; bottom: 0; left: 0;
-    width: 232px; height: 100vh;
+    width: var(--rail); height: 100vh;
     grid-template-columns: 1fr;
     grid-auto-rows: 56px;
     align-content: start;
@@ -427,14 +460,23 @@ button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
   .tab.active { background: rgba(224, 163, 74, 0.12); }
   .tab:hover { background: rgba(255, 255, 255, 0.04); }
 
+  /* Title and count stay together on the left: spread across 3400px they stop
+     reading as one line of information. */
   .topbar {
     max-width: none;
-    padding: 20px 32px 12px;
+    margin: 0;
+    padding: 20px var(--pad) 12px;
     background: var(--bg);
+    justify-content: flex-start;
+    gap: 20px;
   }
-  .topbar h1 { font-size: 26px; }
+  .topbar-count { text-align: left; }
+  .topbar h1 { font-size: clamp(24px, 1.5vw, 32px); }
 
-  .view { padding: 0 32px 40px; max-width: 1500px; }
+  /* Gutter grows with the window instead of staying at a phone-ish 16px. */
+  :root { --pad: clamp(24px, 2vw, 48px); }
+
+  .view { padding: 0 var(--pad) 40px; max-width: none; }
 
   /* Scan: camera on the left, what you scanned on the right - no scrolling. */
   #view-scan.active {
@@ -462,11 +504,14 @@ button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
   #view-scan .manual { grid-area: manual; }
   #scan-result { grid-area: result; position: static; margin: 0; }
 
-  /* Shelves and series breathe: more columns, larger covers. */
-  .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 18px; }
+  /* Shelves and series breathe: more columns, larger covers.
+     The upper bound on a track keeps a shelf of twelve books looking like a
+     shelf on a 34" monitor, instead of twelve enormous posters. */
+  .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 200px)); gap: 18px; justify-content: start; }
+  .grid.grouped, .book-group .grid { justify-content: start; }
   .tile-title { font-size: 13px; }
-  .series-list { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 14px; }
-  .stat-grid { grid-template-columns: repeat(6, 1fr); }
+  .series-list { grid-template-columns: repeat(auto-fill, minmax(340px, 520px)); gap: 14px; justify-content: start; }
+  .stat-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
   .panel { max-width: none; }
   #view-more { display: none; }
   #view-more.active {
@@ -491,6 +536,26 @@ button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
   .sheet-backdrop, #sheet-backdrop { background: rgba(0, 0, 0, 0.6); }
 }
 
+/* ================= ultrawide =================
+   Two things change on a 27"-34" screen:
+   - the shelf gets bigger covers rather than a hundred tiny ones, and
+   - single-column surfaces (a scan result, a form) keep a readable measure
+     instead of stretching a paragraph across two metres of glass. Wasted space
+     is not the target; readable full-width content is. */
+@media (min-width: 1600px) {
+  :root { --rail: 260px; }
+
+  .grid { grid-template-columns: repeat(auto-fill, minmax(176px, 232px)); gap: 22px; }
+  .series-list { grid-template-columns: repeat(auto-fill, minmax(380px, 560px)); }
+
+  /* Camera and verdict side by side, each with a sane ceiling. */
+  #view-scan.active { grid-template-columns: minmax(360px, 760px) minmax(400px, 1fr); gap: 12px 40px; }
+  #scan-result { max-width: 860px; }
+
+  /* The book sheet matches the content area, not the whole viewport. */
+  .sheet { left: calc(50% + var(--rail) / 2); max-width: 920px; }
+}
+
 /* ---------- shelf grouping ---------- */
 /* When grouped, the tiles live inside each group's own grid, so the outer
    container must stop being a grid (it would otherwise lay groups out as tiles). */
@@ -507,8 +572,15 @@ button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
 .group-count { font-variant-numeric: tabular-nums; }
 
 @media (min-width: 1000px) {
-  /* search and the group picker sit on one line when there is room */
-  .shelf-tools { grid-template-columns: minmax(280px, 1fr) 220px; align-items: center; }
+  /* Search and the group picker sit on one line, and stop growing at a
+     sensible width: a 3000px-wide search field is not more useful, it just
+     makes the eye travel. They stay left-aligned so the shelf below them starts
+     at the same edge. */
+  .shelf-tools {
+    grid-template-columns: minmax(280px, 520px) 220px;
+    justify-content: start;
+    align-items: center;
+  }
   .shelf-tools .chips { grid-column: 1 / -1; }
 }
 
@@ -545,3 +617,47 @@ button.danger:disabled { opacity: 0.45; cursor: not-allowed; }
 /* the scan card's book row is clickable once the book exists */
 .book-row[role="button"] { cursor: pointer; }
 .book-row[role="button"]:hover .book-title { text-decoration: underline; }
+
+/* ---------- accessibility ---------- */
+/* Labels that exist for screen readers and password managers, not for the eye:
+   the placeholder is the visible cue inside the login fields. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ---------- login / first-run gate ---------- */
+.gate { overflow-y: auto; }
+.gate-card code {
+  font-size: 12px; background: var(--card-2); border: 1px solid var(--line);
+  border-radius: 5px; padding: 1px 5px; word-break: break-word;
+}
+.gate-card input { text-align: center; }
+.gate-card .primary { min-height: 48px; font-size: 16px; }
+/* Two forms share the gate; only one is ever rendered (the other is [hidden]). */
+#setup-form { text-align: left; }
+#setup-form p { text-align: left; font-size: 13px; line-height: 1.45; }
+
+/* ---------- the book sheet: cover + editable details ---------- */
+.sheet-head { margin-bottom: 16px; align-items: start; grid-template-columns: 96px 1fr; }
+.cover-edit { display: grid; gap: 6px; width: 96px; }
+.cover-edit .cover { width: 96px; }
+.cover-change {
+  font-size: 11px; padding: 6px 4px; border-radius: 8px; width: 96px;
+  background: var(--card-2); border: 1px solid var(--line); color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cover-change:hover { color: var(--text); border-color: var(--accent); }
+.book-meta .link {
+  background: none; border: 0; padding: 0; margin-top: 2px;
+  font: inherit; font-size: 12px; color: var(--muted);
+  text-decoration: underline; cursor: pointer; text-align: left;
+}
+.book-meta .link:hover { color: var(--text); }
+
+.field-group { display: grid; gap: 2px; margin: 4px 0 10px; }
+.group-title {
+  font-size: 12px; text-transform: uppercase; letter-spacing: 0.09em;
+  color: var(--accent); margin: 14px 0 8px; font-weight: 650;
+}
+.field-group .field textarea { font-size: 15px; }

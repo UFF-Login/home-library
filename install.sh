@@ -8,7 +8,8 @@
 set -eu
 
 IMAGE="${IMAGE:-ghcr.io/UFF-Login/home-library:latest}"
-PIN="${BOOKSHELF_PIN:-}"
+USERNAME="${BOOKSHELF_USERNAME:-}"
+PASSWORD="${BOOKSHELF_PASSWORD:-}"
 PORT="${PORT:-8080}"
 
 command -v docker >/dev/null 2>&1 || { echo "Docker is not installed."; exit 1; }
@@ -25,7 +26,8 @@ services:
     ports:
       - "${PORT}:8080"
     environment:
-      BOOKSHELF_PIN: "${PIN}"
+      BOOKSHELF_USERNAME: "${USERNAME}"
+      BOOKSHELF_PASSWORD: "${PASSWORD}"
     volumes:
       - ./data:/data
     healthcheck:

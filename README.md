@@ -45,8 +45,8 @@ You need Docker with the compose plugin, and an HTTPS hostname pointed at it.
 ```bash
 mkdir -p ~/bookshelf && cd ~/bookshelf
 curl -O https://raw.githubusercontent.com/UFF-Login/home-library/main/docker-compose.yml
-# edit BOOKSHELF_PIN and the image name in docker-compose.yml
 docker compose up -d
+# then open the app and create your account (see First run below)
 ```
 
 Then point your reverse proxy (Nginx Proxy Manager / Traefik) at
@@ -66,9 +66,21 @@ fails silently behind a black rectangle. So:
 
 ### First run
 
-- If `BOOKSHELF_PIN` is set, that is the PIN.
-- If it is not set, the app generates a 6-digit PIN and prints it **once** in
-  `docker compose logs`, then stores only its hash.
+The app is guarded by a username and password - there is no anonymous access and
+no shared PIN.
+
+- **With `BOOKSHELF_USERNAME` and `BOOKSHELF_PASSWORD` set** in `.env`: the
+  account is created on first start, and the password follows the file on every
+  restart. That is also the recovery path when a password is forgotten.
+- **With both unset**: the log prints a one-time setup code
+  (`docker compose logs | grep -i "setup code"`). Open the app, enter the code,
+  and choose a username and password. The code is only accepted while no account
+  exists, and only once - so a stranger who finds the URL before you cannot claim
+  the library.
+
+Passwords are stored as scrypt hashes with a per-user salt; the session cookie is
+a signed stamp of user id + expiry. Changing the password in the app signs every
+other device out.
 
 ---
 
@@ -88,7 +100,7 @@ docker pull ghcr.io/uff-login/home-library:latest    # works anonymously
 ```
 
 Public means the *image* is pullable. The catalogue itself never leaves the
-server: it lives in `./data` behind the PIN. If the package is ever made private
+server: it lives in `./data` behind the login. If the package is ever made private
 again, the server needs `docker login ghcr.io -u UFF-Login --password-stdin`
 with a token that has `read:packages`.
 
@@ -98,7 +110,8 @@ with a token that has `read:packages`.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `BOOKSHELF_PIN` | generated | The login PIN. |
+| `BOOKSHELF_USERNAME` | none | Account name. Set with the password to create the account from the server. |
+| `BOOKSHELF_PASSWORD` | none | Password for that account (8+ characters). Applied on every restart, so it wins over an in-app change. |
 | `PORT` | `8080` | Listen port inside the container. |
 | `DATA_DIR` | `/data` | SQLite database + cover cache. Mount a volume. |
 | `TZ` | system | Only affects log timestamps. |
@@ -168,12 +181,14 @@ phone browser ──HTTPS──> reverse proxy ──> container :8080
 ## Development
 
 ```bash
-npm test                 # 23 tests, no network, no Docker
+npm test                 # 75 tests, no network, no Docker
 npm run dev              # watch mode on :8080
-BOOKSHELF_PIN=1234 DATA_DIR=./data npm start
+BOOKSHELF_USERNAME=dev BOOKSHELF_PASSWORD=dev-password DATA_DIR=./data npm start
 npm run icons            # regenerate PWA icons
 npm run vendor           # re-copy zxing from node_modules
 ```
 
-Tests cover ISBN validation, series parsing, author grouping, gap maths, and the
-database round-trip (including that authors survive a write/read cycle).
+Tests cover ISBN validation, series parsing, author grouping, gap maths, the
+database round-trip (including that authors survive a write/read cycle), password
+hashing and session signing, hand-edited fields surviving a metadata refresh, and
+cover-upload validation.

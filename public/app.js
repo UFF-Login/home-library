@@ -28,6 +28,9 @@ const state = {
   defaultOwner: null,
   // Series are filtered in the browser: the whole list is already loaded.
   seriesQuery: '',
+  // Who is signed in, and whether that password may be changed in the app.
+  username: null,
+  passwordManaged: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -84,39 +87,86 @@ function closeSheet() {
 
 // ---------------------------------------------------------------- gate
 
-function showGate() {
+/** Two cards live in the gate: sign in, and first-run account creation. */
+function showGate({ needsSetup = false } = {}) {
   stopScanner();
   state.scanning = false;
   $('gate').hidden = false;
   $('app').hidden = true;
   $('tabs').hidden = true;
+  $('gate-form').hidden = needsSetup;
+  $('setup-form').hidden = !needsSetup;
+  setTimeout(() => ($(needsSetup ? 'setup-code' : 'login-username')?.focus()), 60);
 }
+
+const LOGIN_ERRORS = {
+  bad_credentials: 'Wrong username or password.',
+  too_many_attempts: 'Too many attempts. Wait ten minutes, then try again.',
+  username_required: 'Enter your username.',
+  no_pin_configured: 'This library has no account yet.',
+};
+
+const SETUP_ERRORS = {
+  bad_setup_code: 'That setup code is wrong. It is printed in the server log.',
+  password_too_short: 'Use at least 8 characters for the password.',
+  password_too_long: 'That password is too long.',
+  username_too_long: 'That username is too long (64 characters max).',
+  username_invalid: 'That username contains characters we cannot store.',
+  username_required: 'Choose a username.',
+  already_setup: 'An account already exists. Sign in instead.',
+};
 
 $('gate-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const pin = $('pin').value.trim();
+  const username = $('login-username').value.trim();
+  const password = $('login-password').value;
   $('gate-error').textContent = '';
   try {
     const res = await fetch('/api/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pin }),
+      body: JSON.stringify({ username, password }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      $('gate-error').textContent =
-        data.error === 'too_many_attempts'
-          ? 'Too many attempts. Wait ten minutes.'
-          : data.error === 'wrong_pin'
-            ? 'Wrong PIN.'
-            : 'Could not unlock.';
+      $('gate-error').textContent = LOGIN_ERRORS[data.error] ?? 'Could not sign in.';
+      // A lockout is server-side; clearing the field would only lose the username.
+      $('login-password').value = '';
       return;
     }
-    $('pin').value = '';
+    $('login-password').value = '';
     $('gate').hidden = true;
     boot();
   } catch {
     $('gate-error').textContent = 'Network error.';
+  }
+});
+
+$('setup-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const username = $('setup-username').value.trim();
+  const password = $('setup-password').value;
+  const confirm = $('setup-confirm').value;
+  $('setup-error').textContent = '';
+  if (password !== confirm) {
+    $('setup-error').textContent = 'The two passwords do not match.';
+    return;
+  }
+  try {
+    const res = await fetch('/api/setup', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username, password, code: $('setup-code').value.trim() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('setup-error').textContent = SETUP_ERRORS[data.error] ?? 'Could not create the account.';
+      return;
+    }
+    $('gate').hidden = true;
+    boot();
+  } catch {
+    $('setup-error').textContent = 'Network error.';
   }
 });
 
@@ -653,15 +703,69 @@ const READ_OPTIONS = [
   ['read', 'Read'],
 ];
 
+/**
+ * Re-encode a chosen picture as a JPEG data URL.
+ *
+ * Doing this in the browser keeps the app dependency-free: no image library on
+ * the server, no multipart parsing, and a 12 MB phone photo becomes a ~150 KB
+ * JPEG with its longest edge at 1200px before it is ever sent. The white fill
+ * matters - a JPEG has no transparency, and without it a PNG's clear areas come
+ * out black.
+ */
+const COVER_MAX_EDGE = 1200;
+
+async function imageFileToJpeg(file) {
+  // createImageBitmap is the fast path and handles EXIF rotation in modern
+  // browsers; an <img> is the fallback for the ones that lack it.
+  const source = window.createImageBitmap
+    ? await createImageBitmap(file)
+    : await loadImageElement(file);
+  const width0 = source.width || source.naturalWidth;
+  const height0 = source.height || source.naturalHeight;
+  const scale = Math.min(1, COVER_MAX_EDGE / Math.max(width0, height0));
+  const width = Math.max(1, Math.round(width0 * scale));
+  const height = Math.max(1, Math.round(height0 * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, width, height);
+  context.drawImage(source, 0, 0, width, height);
+  source.close?.();
+  return canvas.toDataURL('image/jpeg', 0.9);
+}
+
+/** Fallback loader: draw an <img> when createImageBitmap is unavailable. */
+function loadImageElement(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('unreadable_image'));
+    };
+    image.src = url;
+  });
+}
+
 function openDetail(isbn) {
   const book = state.books.find((b) => b.isbn13 === isbn) ?? state.lastScan?.book ?? null;
   if (!book) return;
 
   openSheet(`
-    <div class="book-row" style="margin-bottom:14px">
-      ${coverHtml(book, isbn)}
+    <div class="book-row sheet-head">
+      <div class="cover-edit">
+        ${coverHtml(book, isbn)}
+        <button class="cover-change" id="cover-change">Change cover</button>
+      </div>
       <div class="book-meta">
-        <div class="book-title">${esc(book.title)}</div>
+        <div class="book-title">${esc(book.title || 'Untitled')}</div>
         <div class="book-sub">${esc((book.authors ?? []).join(', '))}</div>
         <div class="book-extra">${esc([book.owner, book.publisher, book.published, book.pages ? `${book.pages} pp` : null].filter(Boolean).join(' · '))}</div>
         ${
@@ -672,15 +776,46 @@ function openDetail(isbn) {
             : ''
         }
         ${book.rating ? `<div class="book-extra">★ ${esc(book.rating)} <span>(${esc(book.ratingsCount ?? 0)})</span></div>` : ''}
+        <button class="link" id="cover-reset">Use the catalogue's cover</button>
+      </div>
+    </div>
+    <input id="cover-input" type="file" accept="image/*" hidden />
+
+    <div class="field-group">
+      <h3 class="group-title">Book details</h3>
+      <p class="hint" style="margin:0 0 6px">
+        All of this can be corrected. Your words win: a later metadata refresh only fills blanks.
+      </p>
+      <div class="field"><label for="d-title">Title</label><input id="d-title" value="${esc(book.title ?? '')}" /></div>
+      <div class="field"><label for="d-subtitle">Subtitle</label><input id="d-subtitle" value="${esc(book.subtitle ?? '')}" /></div>
+      <div class="field">
+        <label for="d-author">Author(s)</label>
+        <input id="d-author" value="${esc((book.authors ?? []).join(', '))}" placeholder="Separate several names with commas" />
+      </div>
+      <div class="inline-fields">
+        <div class="field"><label for="d-publisher">Publisher</label><input id="d-publisher" value="${esc(book.publisher ?? '')}" /></div>
+        <div class="field"><label for="d-published">Published</label><input id="d-published" value="${esc(book.published ?? '')}" placeholder="1992" /></div>
+      </div>
+      <div class="inline-fields">
+        <div class="field"><label for="d-pages">Pages</label><input id="d-pages" inputmode="numeric" value="${esc(book.pages ?? '')}" /></div>
+        <div class="field"><label for="d-volume">Volume</label><input id="d-volume" inputmode="numeric" value="${esc(book.volume ?? '')}" /></div>
+      </div>
+      <div class="field"><label for="d-series">Series</label><input id="d-series" value="${esc(book.series ?? '')}" /></div>
+      <div class="field">
+        <label for="d-description">Description</label>
+        <textarea id="d-description" rows="4" placeholder="Blurb, or a note about this copy">${esc(book.description ?? '')}</textarea>
       </div>
     </div>
 
-    ${book.description ? `<p class="book-description">${esc(book.description)}</p>` : ''}
+    <div class="field-group">
+      <h3 class="group-title">Your copy</h3>
+    </div>
+
     ${
       // Placeholder records (saved before any provider identified them) would
       // otherwise stay nameless forever if no source ever answers.
       !book.title
-        ? `<p class="hint">This book was saved without a title. It fills in automatically when a source recognises the ISBN.<br /><button class="link" data-act="manual-add" data-isbn="${esc(book.isbn13)}">Name it by hand instead</button></p>`
+        ? `<p class="hint">This book was saved without a title. It fills in automatically when a source recognises the ISBN, or type one above.</p>`
         : ''
     }
 
@@ -728,14 +863,9 @@ function openDetail(isbn) {
     </div>
     <div class="field"><label for="d-loan">Lent to</label><input id="d-loan" value="${esc(book.loanedTo ?? '')}" placeholder="Empty = on the shelf" /></div>
 
-    <div class="field">
-      <label>Series &amp; volume</label>
-      <p class="hint" style="margin:0 0 6px">Filled in from Open Library when it knows them — nothing to type. Only correct it if it is wrong; the missing-number maths uses it.</p>
-      <div class="inline-fields">
-        <div class="field" style="margin:0"><input id="d-series" placeholder="Series" value="${esc(book.series ?? '')}" /></div>
-        <div class="field" style="margin:0"><input id="d-volume" inputmode="numeric" placeholder="Volume" value="${esc(book.volume ?? '')}" /></div>
-      </div>
-    </div>
+    <p class="hint" style="margin:0 0 6px">
+      Series and volume live under Book details — the missing-number maths uses them, so correct them if a provider got them wrong.
+    </p>
 
     <div class="field"><label for="d-notes">Notes</label><textarea id="d-notes" rows="3" placeholder="Anything worth remembering">${esc(book.notes ?? '')}</textarea></div>
 
@@ -777,22 +907,95 @@ function openDetail(isbn) {
     }),
   );
 
+  // ---- the cover: your own picture, or back to the catalogue's ----
+  $('cover-change').addEventListener('click', () => {
+    const input = $('cover-input');
+    input.value = '';
+    input.click();
+  });
+
+  $('cover-input').addEventListener('change', async () => {
+    const file = $('cover-input').files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return toast('That file is not a picture');
+    toast('Uploading cover…');
+    try {
+      // The browser re-encodes it, so any phone photo (HEIC aside) works and
+      // the server receives one predictable, small JPEG.
+      const image = await imageFileToJpeg(file);
+      const result = await api(`/api/books/${book.isbn13}/cover`, {
+        method: 'POST',
+        body: { image },
+      });
+      // Adopt the new epoch: every cover URL carries it, and the old number is
+      // what the phone has cached for a year.
+      state.coverEpoch = result.epoch ?? state.coverEpoch;
+      toast('Cover replaced');
+      await loadShelf();
+      openDetail(book.isbn13);
+    } catch (error) {
+      toast(error?.message === 'too_large' ? 'That picture is too big' : 'Could not use that picture');
+    }
+  });
+
+  $('cover-reset').addEventListener('click', async () => {
+    try {
+      const result = await api(`/api/books/${book.isbn13}/cover`, { method: 'DELETE' });
+      state.coverEpoch = result.epoch ?? state.coverEpoch;
+      toast('Back to the catalogue cover');
+      await loadShelf();
+      openDetail(book.isbn13);
+    } catch {
+      toast('Could not restore the cover');
+    }
+  });
+
   $('d-close').addEventListener('click', closeSheet);
   $('d-save').addEventListener('click', async () => {
-    await saveBook(book.isbn13, {
-      state: draft.state,
-      read_state: draft.readState,
-      my_rating: draft.myRating,
-      owner: $('d-owner').value.trim() || null,
-      loaned_to: $('d-loan').value.trim() || null,
-      loaned_at: $('d-loan').value.trim() ? book.loanedAt ?? new Date().toISOString() : null,
-      notes: $('d-notes').value.trim() || null,
-      series: $('d-series').value.trim() || null,
-      volume: $('d-volume').value ? Number($('d-volume').value) : null,
-    });
-    closeSheet();
-    toast('Saved');
-    await Promise.all([loadShelf(), loadStats(), loadSeries()]);
+    const title = $('d-title').value.trim();
+    if (!title) return toast('A title is needed');
+
+    const button = $('d-save');
+    button.disabled = true;
+    try {
+      await saveBook(book.isbn13, {
+        // Everything the catalogue said, now as the person says it.
+        title,
+        subtitle: $('d-subtitle').value.trim() || null,
+        author: $('d-author').value.trim(),
+        publisher: $('d-publisher').value.trim() || null,
+        published: $('d-published').value.trim() || null,
+        pages: $('d-pages').value.trim() || null,
+        series: $('d-series').value.trim() || null,
+        volume: $('d-volume').value.trim() || null,
+        description: $('d-description').value.trim() || null,
+        // The copy itself.
+        state: draft.state,
+        read_state: draft.readState,
+        my_rating: draft.myRating,
+        owner: $('d-owner').value.trim() || null,
+        loaned_to: $('d-loan').value.trim() || null,
+        loaned_at: $('d-loan').value.trim() ? book.loanedAt ?? new Date().toISOString() : null,
+        notes: $('d-notes').value.trim() || null,
+      });
+      closeSheet();
+      toast('Saved');
+      await Promise.all([loadShelf(), loadStats(), loadSeries()]);
+    } catch (error) {
+      // Say what the server refused instead of closing and losing the edits.
+      const reason = error?.data?.error;
+      const message =
+        reason === 'title_required'
+          ? 'A title is needed'
+          : reason === 'pages_invalid'
+            ? 'Pages must be a number'
+            : reason === 'volume_invalid'
+              ? 'Volume must be a number'
+              : 'Could not save — try again';
+      toast(message);
+    } finally {
+      button.disabled = false;
+    }
   });
   $('d-delete').addEventListener('click', async () => {
     if (!confirm(`Remove "${book.title}" from the catalogue?`)) return;
@@ -1057,7 +1260,19 @@ async function addOwnerFromInput() {
 }
 
 async function renderMore() {
+  renderAccount();
   await Promise.all([loadStats(), loadRecentScans(), loadSourceStatus(), loadOwners()]);
+}
+
+/** Who is signed in, and whether the password can be changed here at all. */
+function renderAccount() {
+  const name = $('account-name');
+  if (name) name.textContent = state.username ?? '—';
+  const managed = Boolean(state.passwordManaged);
+  if ($('account-note')) $('account-note').hidden = !managed;
+  // Hiding the form is better than letting someone type a change that the next
+  // restart would silently undo.
+  if ($('password-block')) $('password-block').hidden = managed;
 }
 
 /**
@@ -1088,9 +1303,41 @@ async function loadRecentScans() {
       .join('') || '<div>No scans yet</div>';
 }
 
-$('btn-logout').addEventListener('click', async () => {
-  await fetch('/api/logout', { method: 'POST' });
+$('btn-signout').addEventListener('click', async () => {
+  await fetch('/api/logout', { method: 'POST' }).catch(() => {});
+  state.username = null;
   showGate();
+});
+
+$('btn-password').addEventListener('click', async () => {
+  const status = $('password-status');
+  const current = $('pw-current').value;
+  const next = $('pw-next').value;
+  if (!current || !next) {
+    status.textContent = 'Fill in both password boxes.';
+    return;
+  }
+  const button = $('btn-password');
+  button.disabled = true;
+  status.textContent = '';
+  try {
+    await api('/api/account/password', { method: 'POST', body: { current, next } });
+    $('pw-current').value = '';
+    $('pw-next').value = '';
+    status.textContent = 'Password changed. Other devices have been signed out.';
+  } catch (error) {
+    const reason = error?.data?.error;
+    status.textContent =
+      reason === 'wrong_password'
+        ? 'That is not the current password.'
+        : reason === 'password_too_short'
+          ? 'Use at least 8 characters.'
+          : reason === 'managed_by_env'
+            ? "The password comes from the server's environment."
+            : 'Could not change the password.';
+  } finally {
+    button.disabled = false;
+  }
 });
 
 $('btn-refresh').addEventListener('click', () => refreshApp());
@@ -1279,6 +1526,18 @@ async function boot() {
   $('tabs').hidden = false;
   loadIndex();
   setTab('scan');
+  // After a fresh sign-in the boot path knows nothing about the account yet;
+  // one cheap call fills the Account panel in.
+  if (!state.username) {
+    fetch('/api/me')
+      .then((res) => res.json())
+      .then((me) => {
+        state.username = me.username ?? null;
+        state.passwordManaged = Boolean(me.passwordManaged);
+        renderAccount();
+      })
+      .catch(() => {});
+  }
   try {
     await Promise.all([loadStats(), loadShelf(), loadSeries(), loadOwners()]);
   } catch (error) {
@@ -1292,7 +1551,7 @@ async function boot() {
  */
 function setVersion(version, build) {
   state.version = build ?? version ?? null;
-  for (const id of ['version-chip', 'gate-version']) {
+  for (const id of ['version-chip', 'gate-version', 'setup-version']) {
     const node = document.getElementById(id);
     if (!node) continue;
     node.textContent = version || 'v?';
@@ -1305,7 +1564,11 @@ async function init() {
     const me = await (await fetch('/api/me')).json();
     setVersion(me.version, me.build);
     state.coverEpoch = me.coverEpoch ?? 0;
+    state.username = me.username ?? null;
+    state.passwordManaged = Boolean(me.passwordManaged);
     if (me.authed) return boot();
+    // No account exists yet: this is a first run, not a failed sign-in.
+    return showGate({ needsSetup: Boolean(me.needsSetup) });
   } catch {
     // fall through to the gate
   }

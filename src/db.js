@@ -89,6 +89,19 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT
 );
 
+-- Accounts. A password is never stored: only a scrypt hash with its own salt,
+-- so a copy of this file cannot be replayed as a login.
+--
+-- COLLATE NOCASE on the username means "Sam" and "sam" cannot both be created,
+-- which is what a person typing their name expects.
+CREATE TABLE IF NOT EXISTS users (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  username      TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL
+);
+
 -- Metadata fetched from Open Library, including "nothing found". Cached so a
 -- shop scan of the same book twice, or a rescan after adding it, costs nothing;
 -- and so a miss is not re-queried every time the phone looks at it.
@@ -757,4 +770,83 @@ export function setSeriesCache(db, seriesKeyValue, payload) {
 /** Forget every cached series answer (used by "rebuild book data"). */
 export function clearSeriesCache(db) {
   return db.prepare('DELETE FROM series_cache').run().changes;
+}
+
+
+// ---------------------------------------------------------------- accounts
+
+export function countUsers(db) {
+  return db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
+}
+
+export function getUserByName(db, username) {
+  return (
+    db
+      .prepare('SELECT id, username, password_hash, created_at FROM users WHERE username = ?')
+      .get(String(username ?? '').trim()) ?? null
+  );
+}
+
+export function getUserById(db, id) {
+  return (
+    db.prepare('SELECT id, username, password_hash FROM users WHERE id = ?').get(Number(id)) ?? null
+  );
+}
+
+export function createUser(db, { username, passwordHash }) {
+  const at = nowIso();
+  const info = db
+    .prepare('INSERT INTO users (username, password_hash, created_at, updated_at) VALUES (?,?,?,?)')
+    .run(String(username).trim(), passwordHash, at, at);
+  return { id: Number(info.lastInsertRowid), username: String(username).trim() };
+}
+
+export function setUserPassword(db, id, passwordHash) {
+  return (
+    db
+      .prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?')
+      .run(passwordHash, nowIso(), Number(id)).changes > 0
+  );
+}
+
+
+// ---------------------------------------------------------------- book edits
+
+/**
+ * Columns a person is allowed to correct by hand.
+ *
+ * The whitelist is the guard: the key becomes a column name in the UPDATE, so
+ * anything not on this list can never reach the SQL.
+ */
+const WORK_EDITABLE = [
+  'title',
+  'subtitle',
+  'authors',
+  'author_key',
+  'series',
+  'series_key',
+  'volume',
+  'publisher',
+  'published',
+  'pages',
+  'description',
+];
+
+/**
+ * Write the fields a user typed over whatever the providers said.
+ *
+ * Deliberately a plain overwrite, unlike saveBook(): that function fills blanks
+ * only, because API data must never clobber a correction. Here the correction is
+ * the whole point.
+ */
+export function updateWork(db, workId, patch = {}) {
+  const keys = WORK_EDITABLE.filter((key) => patch[key] !== undefined);
+  if (!keys.length) return 0;
+  const assignments = keys.map((key) => `${key} = ?`).join(', ');
+  db.prepare(`UPDATE works SET ${assignments}, updated_at = ? WHERE id = ?`).run(
+    ...keys.map((key) => patch[key]),
+    nowIso(),
+    Number(workId),
+  );
+  return keys.length;
 }
